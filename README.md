@@ -1,6 +1,8 @@
 # Ve.Direct InfluxDB Collector
 Collects data from your Victron SmartSolar MPPT and sends it to InfluxDB
 
+![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/image.jpg)
+
 ## Requirements
 * [The matching Grafana Dashboard](https://grafana.com/grafana/dashboards/14597)
 * [Solar charge controller](https://www.victronenergy.com/solar-charge-controllers)
