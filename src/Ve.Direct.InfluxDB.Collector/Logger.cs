@@ -4,6 +4,13 @@ namespace Ve.Direct.InfluxDB.Collector
 {
     public class Logger
     {
+        private static bool writeDebug;
+
+        public static void EnableDebugOutput()
+        {
+            writeDebug = true;
+        }
+
         public static void Info(string message)
         {
             var oldForeground = Console.ForegroundColor;
@@ -14,6 +21,11 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public static void Debug(string message)
         {
+            if (!writeDebug)
+            {
+                return;
+            }
+
             var oldForeground = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"{DateTime.Now:o} DEBUG {message}");

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Threading.Tasks;
 using McMaster.Extensions.CommandLineUtils;
 using Ve.Direct.InfluxDB.Collector.Metrics;
 
@@ -7,12 +8,7 @@ namespace Ve.Direct.InfluxDB.Collector
 {
     public class Program
     {
-        private static bool keepRunning = true;
-
-        public static int Main(string[] args)
-        {
-            return CommandLineApplication.Execute<Program>(args);
-        }
+        public static async Task<int> Main(string[] args) => await CommandLineApplication.ExecuteAsync<Program>(args);
 
         public enum OutputSettingEnum
         {
@@ -35,13 +31,15 @@ namespace Ve.Direct.InfluxDB.Collector
         [Option("--interval", Description = "The interval in seconds to request metrics. Defaults to 10")]
         public int IntervalSeconds { get; } = 10;
 
-        private void OnExecute()
+        [Option("--debugOutput", Description = "By default it is disabled.")]
+        public bool DebugOutput { get; } = false;
+
+        private async Task OnExecuteAsync(CancellationToken ct)
         {
-            Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
+            if (this.DebugOutput)
             {
-                e.Cancel = true;
-                keepRunning = false;
-            };
+                Logger.EnableDebugOutput();
+            }
 
             try
             {
@@ -54,7 +52,7 @@ namespace Ve.Direct.InfluxDB.Collector
                 };
                 config.Validate();
 
-                var version = "1.0.0";
+                var version = "1.1.0";
                 Logger.Info($"Current Version: {version}");
                 Logger.Debug($"Current output setting: {this.OutputSetting}");
                 Logger.Debug($"InfluxDb {config.InfluxDbUri}");
@@ -66,11 +64,11 @@ namespace Ve.Direct.InfluxDB.Collector
                 switch (this.OutputSetting)
                 {
                     case OutputSettingEnum.Console:
-                        reader.ReadPortData(reader.PrintMetricsCallback, ref keepRunning);
+                        reader.ReadPortData(reader.PrintMetricsCallback, ct);
                         break;
                     case OutputSettingEnum.Influx:
-                        var client = new MetricsClient(config);
-                        reader.ReadPortData(client.SendMetricsCallback, ref keepRunning);
+                        var metricsCompositor = new MetricsCompositor(config);
+                        await reader.ReadPortData(metricsCompositor.SendMetricsCallback, ct);
                         break;
                     default:
                         throw new System.ComponentModel.InvalidEnumArgumentException(nameof(this.OutputSetting));
@@ -80,10 +78,6 @@ namespace Ve.Direct.InfluxDB.Collector
             {
                 Logger.Error(e.Message);
                 Environment.Exit(1);
-            }
-            finally
-            {
-                Thread.Sleep(100);
             }
         }
     }
