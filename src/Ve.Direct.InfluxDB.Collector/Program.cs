@@ -64,7 +64,7 @@ namespace Ve.Direct.InfluxDB.Collector
                 switch (this.OutputSetting)
                 {
                     case OutputSettingEnum.Console:
-                        reader.ReadPortData(reader.PrintMetricsCallback, ct);
+                        reader.WritePortDataToConsole(ct);
                         break;
                     case OutputSettingEnum.Influx:
                         var metricsCompositor = new MetricsCompositor(config);

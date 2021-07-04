@@ -124,7 +124,7 @@ namespace Ve.Direct.InfluxDB.Collector
             return null;
         }
 
-        public void ReadPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
+        public void WritePortDataToConsole(CancellationToken ct)
         {
             this.serialPort.Open();
             while (!ct.IsCancellationRequested)
@@ -135,7 +135,10 @@ namespace Ve.Direct.InfluxDB.Collector
                     var packet = this.input(byte1);
                     if (packet != null)
                     {
-                        callbackFunction(packet);
+                        foreach (var kvp in packet)
+                        {
+                            Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, kvp.Value);
+                        }
                     }
                 }
             }
@@ -155,14 +158,6 @@ namespace Ve.Direct.InfluxDB.Collector
                         await callbackFunction(packet).ConfigureAwait(false);
                     }
                 }
-            }
-        }
-
-        public void PrintMetricsCallback(Dictionary<string, string> data)
-        {
-            foreach (var kvp in data)
-            {
-                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, kvp.Value);
             }
         }
     }
