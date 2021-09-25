@@ -137,7 +137,15 @@ namespace Ve.Direct.InfluxDB.Collector
                     {
                         foreach (var kvp in packet)
                         {
-                            Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, kvp.Value);
+                            if (kvp.Key.ToLower() == "pid")
+                            {
+                                Console.WriteLine(kvp.Key.GetVictronDeviceNameByPid());
+                            }
+                            else
+                            {
+                                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, kvp.Value);
+                            }
+
                         }
                     }
                 }
