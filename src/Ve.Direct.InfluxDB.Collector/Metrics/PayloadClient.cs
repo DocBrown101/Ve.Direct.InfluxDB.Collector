@@ -1,70 +1,87 @@
-﻿using System;
+﻿using InfluxDB.Client;
+using InfluxDB.Client.Api.Domain;
+using InfluxDB.Client.Writes;
+using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
-using InfluxDB.Collector.Diagnostics;
-using InfluxDB.LineProtocol.Client;
-using InfluxDB.LineProtocol.Payload;
 
 namespace Ve.Direct.InfluxDB.Collector.Metrics
 {
     public class PayloadClient
     {
         private readonly MetricsConfigurationModel configuration;
-        private readonly LineProtocolClient client;
-        
-        private LineProtocolPayload payload;
+        private readonly InfluxDBClient influxDBClient;
+        private readonly List<PointData> pointDataList;
 
         public PayloadClient(MetricsConfigurationModel configuration)
         {
             this.configuration = configuration;
+            this.pointDataList = new List<PointData>();
 
-            this.client = new LineProtocolClient(configuration.InfluxDbUri, configuration.InfluxDbName);
-            this.payload = new LineProtocolPayload();
+            var builder = new InfluxDBClientOptions.Builder();
+            builder.Url(configuration.InfluxDbUrl);
+            builder.Bucket(configuration.InfluxDbBucket);
+            builder.Org(configuration.InfluxDbOrg);
 
-            CollectorLog.RegisterErrorHandler((message, exception) =>
-            {
-                Logger.Error($"Collector {message}: {exception}");
-            });
+            this.influxDBClient = InfluxDBClientFactory.Create(builder.Build());
         }
 
         public void AddPayload(MetricsTransmissionModel metrics)
         {
             var payloadDateTime = DateTime.UtcNow;
 
-            this.payload.Add(new LineProtocolPoint($"{this.configuration.MetricPrefix}_battery",
-                new Dictionary<string, object> { { "voltage", metrics.BatteryMillivolt }, { "current", metrics.BatteryMillicurrent }, { "power", metrics.BatteryPowerCalculated } },
-                new Dictionary<string, string> { { "host", Environment.MachineName } }, payloadDateTime));
+            this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_battery")
+                    .Tag("host", Environment.MachineName)
+                    .Field("voltage", metrics.BatteryMillivolt)
+                    .Field("current", metrics.BatteryMillicurrent)
+                    .Field("power", metrics.BatteryPowerCalculated)
+                    .Timestamp(payloadDateTime, WritePrecision.Ms));
 
-            this.payload.Add(new LineProtocolPoint($"{this.configuration.MetricPrefix}_panel",
-                new Dictionary<string, object> { { "voltage", metrics.PanelMillivolt }, { "current", metrics.PanelMillicurrentCalculated }, { "power", metrics.PanelPower } },
-                new Dictionary<string, string> { { "host", Environment.MachineName } }, payloadDateTime));
+            this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_panel")
+                    .Tag("host", Environment.MachineName)
+                    .Field("voltage", metrics.PanelMillivolt)
+                    .Field("current", metrics.PanelMillicurrentCalculated)
+                    .Field("power", metrics.PanelPower)
+                    .Timestamp(payloadDateTime, WritePrecision.Ms));
 
-            this.payload.Add(new LineProtocolPoint($"{this.configuration.MetricPrefix}_load",
-                new Dictionary<string, object> { { "current", metrics.LoadMillicurrent }, { "power", metrics.LoadPowerCalculated }, { "Status", metrics.LoadStatus } },
-                new Dictionary<string, string> { { "host", Environment.MachineName } }, payloadDateTime));
+            this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_load")
+                    .Tag("host", Environment.MachineName)
+                    .Field("current", metrics.LoadMillicurrent)
+                    .Field("power", metrics.LoadPowerCalculated)
+                    .Field("Status", metrics.LoadStatus)
+                    .Timestamp(payloadDateTime, WritePrecision.Ms));
 
-            this.payload.Add(new LineProtocolPoint($"{this.configuration.MetricPrefix}_today",
-                new Dictionary<string, object> { { "yield", metrics.TodayYield }, { "power", metrics.TodayPower } },
-                new Dictionary<string, string> { { "host", Environment.MachineName } }, payloadDateTime));
+            this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_today")
+                    .Tag("host", Environment.MachineName)
+                    .Field("yield", metrics.TodayYield)
+                    .Field("power", metrics.TodayPower)
+                    .Timestamp(payloadDateTime, WritePrecision.Ms));
 
-            this.payload.Add(new LineProtocolPoint($"{this.configuration.MetricPrefix}_VICTRON",
-                new Dictionary<string, object> { { "CS_Status", metrics.VICTRON_CS_Status }, { "ERR_Status", metrics.VICTRON_ERR_Status }, { "MPPT_Status", metrics.VICTRON_MPPT_Status } },
-                new Dictionary<string, string> { { "host", Environment.MachineName } }, payloadDateTime));
+            this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_VICTRON")
+                    .Tag("host", Environment.MachineName)
+                    .Field("CS_Status", metrics.VICTRON_CS_Status)
+                    .Field("ERR_Status", metrics.VICTRON_ERR_Status)
+                    .Field("MPPT_Status", metrics.VICTRON_MPPT_Status)
+                    .Timestamp(payloadDateTime, WritePrecision.Ms));
         }
 
-        public async Task TrySendPayload()
+        public void TrySendPayload()
         {
-            var influxResult = await this.client.WriteAsync(this.payload).ConfigureAwait(false);
-
-            if (influxResult.Success)
+            if (this.pointDataList.Count >= this.configuration.MinimumDataPoints)
             {
-                this.payload = new LineProtocolPayload();
+                try
+                {
+                    using (var writeApi = this.influxDBClient.GetWriteApi())
+                    {
+                        writeApi.WritePoints(this.pointDataList);
 
-                Logger.Debug("InfluxDb write operation completed successfully");
-            }
-            else
-            {
-                Logger.Error(influxResult.ErrorMessage);
+                        this.pointDataList.Clear();
+                        Logger.Debug("InfluxDb write operation completed successfully");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex.Message);
+                }
             }
         }
     }

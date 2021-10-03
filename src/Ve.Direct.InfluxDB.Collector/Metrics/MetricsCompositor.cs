@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
+﻿using System.Collections.Generic;
 
 namespace Ve.Direct.InfluxDB.Collector.Metrics
 {
@@ -45,29 +43,19 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
     /// </summary>
     public class MetricsCompositor
     {
-        private readonly MetricsConfigurationModel configuration;
         private readonly PayloadClient payloadClient;
-
-        private DateTime lastWriteTime = DateTime.MinValue;
 
         public MetricsCompositor(MetricsConfigurationModel configuration)
         {
-            this.configuration = configuration;
             this.payloadClient = new PayloadClient(configuration);
         }
 
-        public async Task SendMetricsCallback(Dictionary<string, string> rawData)
+        public void SendMetricsCallback(Dictionary<string, string> rawData)
         {
             Logger.Debug("Just received new raw data!");
 
             this.payloadClient.AddPayload(this.ConvertToMetricsTransmissionModel(rawData));
-
-            if ((DateTime.Now - this.lastWriteTime).TotalSeconds >= this.configuration.IntervalSeconds)
-            {
-                this.lastWriteTime = DateTime.Now;
-
-                await this.payloadClient.TrySendPayload().ConfigureAwait(false);
-            }
+            this.payloadClient.TrySendPayload();
         }
 
         private MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data)

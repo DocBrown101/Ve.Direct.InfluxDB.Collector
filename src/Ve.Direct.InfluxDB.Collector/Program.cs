@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Threading;
-using System.Threading.Tasks;
 using McMaster.Extensions.CommandLineUtils;
 using Ve.Direct.InfluxDB.Collector.Metrics;
 
@@ -8,7 +7,7 @@ namespace Ve.Direct.InfluxDB.Collector
 {
     public class Program
     {
-        public static async Task<int> Main(string[] args) => await CommandLineApplication.ExecuteAsync<Program>(args);
+        public static void Main(string[] args) => CommandLineApplication.Execute<Program>(args);
 
         public enum OutputSettingEnum
         {
@@ -19,22 +18,25 @@ namespace Ve.Direct.InfluxDB.Collector
         [Option(CommandOptionType.SingleValue, Description = "Console or Influx. Defaults to Console")]
         public OutputSettingEnum OutputSetting { get; set; }
 
-        [Option("--influxDbUri", Description = "The InfluxDb Uri. E.g. http://192.168.0.220:8086")]
-        public Uri InfluxDbUri { get; } = new Uri("http://192.168.0.220:8086");
+        [Option("--influxDbUrl", Description = "The InfluxDb Url. E.g. http://192.168.0.220:8086")]
+        public string InfluxDbUrl { get; } = "http://192.168.0.220:8086";
 
-        [Option("--influxDbName", Description = "The InfluxDb database name. Defaults to solar")]
-        public string InfluxDbName { get; } = "solar";
+        [Option("--influxDbBucket", Description = "The InfluxDb Bucket name. Defaults to solar")]
+        public string InfluxDbBucket { get; } = "solar";
+
+        [Option("--influxDbOrg", Description = "The InfluxDb Org name. Defaults to home")]
+        public string InfluxDbOrg { get; } = "home";
 
         [Option("--metricPrefix", Description = "Prefix all metrics pushed into the InfluxDb. Defaults to ve_direct")]
         public string MetricPrefix { get; } = "ve_direct";
 
-        [Option("--interval", Description = "The interval in seconds to request metrics. Defaults to 10")]
-        public int IntervalSeconds { get; } = 10;
+        [Option("--interval", Description = "Minimum number of data points for transmission. Defaults to 10")]
+        public int MinimumDataPoints { get; } = 10;
 
         [Option("--debugOutput", Description = "By default it is disabled.")]
         public bool DebugOutput { get; } = false;
 
-        private async Task OnExecuteAsync(CancellationToken ct)
+        private void OnExecute(CancellationToken ct)
         {
             if (this.DebugOutput)
             {
@@ -45,18 +47,19 @@ namespace Ve.Direct.InfluxDB.Collector
             {
                 var config = new MetricsConfigurationModel()
                 {
-                    InfluxDbUri = InfluxDbUri,
-                    IntervalSeconds = IntervalSeconds,
-                    InfluxDbName = InfluxDbName,
+                    InfluxDbUrl = InfluxDbUrl,
+                    MinimumDataPoints = MinimumDataPoints,
+                    InfluxDbBucket = InfluxDbBucket,
+                    InfluxDbOrg = InfluxDbOrg,
                     MetricPrefix = MetricPrefix
                 };
                 config.Validate();
 
-                var version = "1.1.0";
+                var version = "2.0.0";
                 Logger.Info($"Current Version: {version}");
                 Logger.Debug($"Current output setting: {this.OutputSetting}");
-                Logger.Debug($"InfluxDb {config.InfluxDbUri}");
-                Logger.Debug($"Interval {config.IntervalSeconds} seconds");
+                Logger.Debug($"InfluxDb {config.InfluxDbUrl}");
+                Logger.Debug($"Minimum number of data points for transmission: {config.MinimumDataPoints}");
                 Logger.Info($"Collect Metrics ...");
 
                 var reader = new VEDirectReader();
@@ -68,7 +71,7 @@ namespace Ve.Direct.InfluxDB.Collector
                         break;
                     case OutputSettingEnum.Influx:
                         var metricsCompositor = new MetricsCompositor(config);
-                        await reader.ReadPortData(metricsCompositor.SendMetricsCallback, ct);
+                        reader.ReadPortData(metricsCompositor.SendMetricsCallback, ct);
                         break;
                     default:
                         throw new System.ComponentModel.InvalidEnumArgumentException(nameof(this.OutputSetting));

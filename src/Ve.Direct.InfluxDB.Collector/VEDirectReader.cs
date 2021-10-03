@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO.Ports;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Ve.Direct.InfluxDB.Collector
 {
@@ -152,7 +151,7 @@ namespace Ve.Direct.InfluxDB.Collector
             }
         }
 
-        public async Task ReadPortData(Func<Dictionary<string, string>, Task> callbackFunction, CancellationToken ct)
+        public void ReadPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
             this.serialPort.Open();
             while (!ct.IsCancellationRequested)
@@ -163,7 +162,7 @@ namespace Ve.Direct.InfluxDB.Collector
                     var packet = this.input(byte1);
                     if (packet != null)
                     {
-                        await callbackFunction(packet).ConfigureAwait(false);
+                        callbackFunction(packet);
                     }
                 }
             }
