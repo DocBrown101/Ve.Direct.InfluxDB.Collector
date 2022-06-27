@@ -2,7 +2,7 @@
 
 namespace Ve.Direct.InfluxDB.Collector
 {
-    public class Logger
+    public static class Logger
     {
         private static bool writeDebug;
 

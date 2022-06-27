@@ -9,14 +9,14 @@ namespace Ve.Direct.InfluxDB.Collector
     {
         public static void Main(string[] args) => CommandLineApplication.Execute<Program>(args);
 
-        public enum OutputSettingEnum
+        public enum OutputDefinition
         {
             Console,
             Influx
         }
 
         [Option(CommandOptionType.SingleValue, Description = "Console or Influx. Defaults to Console")]
-        public OutputSettingEnum OutputSetting { get; set; }
+        public OutputDefinition OutputSetting { get; set; }
 
         [Option("--influxDbUrl", Description = "The InfluxDb Url. E.g. http://192.168.0.220:8086")]
         public string InfluxDbUrl { get; } = "http://192.168.0.220:8086";
@@ -66,10 +66,10 @@ namespace Ve.Direct.InfluxDB.Collector
 
                 switch (this.OutputSetting)
                 {
-                    case OutputSettingEnum.Console:
+                    case OutputDefinition.Console:
                         reader.WritePortDataToConsole(ct);
                         break;
-                    case OutputSettingEnum.Influx:
+                    case OutputDefinition.Influx:
                         var metricsCompositor = new MetricsCompositor(config);
                         reader.ReadPortData(metricsCompositor.SendMetricsCallback, ct);
                         break;
