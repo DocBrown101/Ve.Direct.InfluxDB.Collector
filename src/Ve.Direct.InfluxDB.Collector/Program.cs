@@ -38,10 +38,8 @@ namespace Ve.Direct.InfluxDB.Collector
 
         private void OnExecute(CancellationToken ct)
         {
-            if (this.DebugOutput)
-            {
-                Logger.EnableDebugOutput();
-            }
+            Logger.Init(this.DebugOutput, "2.1.0");
+            Logger.Debug($"Current output setting: {this.OutputSetting}");
 
             try
             {
@@ -54,13 +52,6 @@ namespace Ve.Direct.InfluxDB.Collector
                     MetricPrefix = MetricPrefix
                 };
                 config.Validate();
-
-                var version = "2.0.0";
-                Logger.Info($"Current Version: {version}");
-                Logger.Debug($"Current output setting: {this.OutputSetting}");
-                Logger.Debug($"InfluxDb {config.InfluxDbUrl}");
-                Logger.Debug($"Minimum number of data points for transmission: {config.MinimumDataPoints}");
-                Logger.Info($"Collect Metrics ...");
 
                 var reader = new VEDirectReader();
 

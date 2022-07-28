@@ -30,6 +30,8 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public VEDirectReader()
         {
+            Logger.Info($"Collect Metrics ...");
+
             var serialport = SerialPort.GetPortNames().FirstOrDefault();
             if (serialport == null)
             {

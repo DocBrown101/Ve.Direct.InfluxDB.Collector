@@ -6,9 +6,11 @@ namespace Ve.Direct.InfluxDB.Collector
     {
         private static bool writeDebug;
 
-        public static void EnableDebugOutput()
+        public static void Init(bool enableDebugOutput, string version)
         {
-            writeDebug = true;
+            writeDebug = enableDebugOutput;
+
+            Info($"Current Version: {version}");
         }
 
         public static void Info(string message)

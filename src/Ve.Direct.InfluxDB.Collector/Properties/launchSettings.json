@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Ve.Direct.InfluxDB.Collector": {
+      "commandName": "Project",
+      "commandLineArgs": "--debugOutput"
+    }
+  }
+}

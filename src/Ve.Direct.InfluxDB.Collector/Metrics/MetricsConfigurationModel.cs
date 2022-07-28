@@ -42,6 +42,12 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
             {
                 throw new ArgumentException($"The {nameof(this.MinimumDataPoints)} should be greater than {minInterval}");
             }
+
+            Logger.Debug($"InfluxDb {this.InfluxDbUrl}");
+            Logger.Debug($"InfluxDbOrg {this.InfluxDbOrg}");
+            Logger.Debug($"InfluxDbBucket {this.InfluxDbBucket}");
+            Logger.Debug($"MetricPrefix {this.MetricPrefix}");
+            Logger.Debug($"Minimum number of data points for transmission: {this.MinimumDataPoints}");
         }
     }
 }
