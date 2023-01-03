@@ -15,7 +15,7 @@ namespace Ve.Direct.InfluxDB.Collector
             Influx
         }
 
-        [Option(CommandOptionType.SingleValue, Description = "Console or Influx. Defaults to Console")]
+        [Option("-o|--output", CommandOptionType.SingleValue, Description = "Console or Influx. Defaults to Console")]
         public OutputDefinition OutputSetting { get; set; }
 
         [Option("--influxDbUrl", Description = "The InfluxDb Url. E.g. http://192.168.0.220:8086")]
@@ -59,6 +59,7 @@ namespace Ve.Direct.InfluxDB.Collector
                 {
                     case OutputDefinition.Console:
                         reader.WritePortDataToConsole(ct);
+                        //reader.WritePortDataToConsoleVersion2(ct);
                         break;
                     case OutputDefinition.Influx:
                         var metricsCompositor = new MetricsCompositor(config);
@@ -71,6 +72,15 @@ namespace Ve.Direct.InfluxDB.Collector
             catch (Exception e)
             {
                 Logger.Error(e.Message);
+
+                var innerException = e.InnerException;
+
+                while (innerException != null)
+                {
+                    Logger.Error(innerException.Message);
+                    innerException = innerException.InnerException;
+                }
+
                 Environment.Exit(1);
             }
         }

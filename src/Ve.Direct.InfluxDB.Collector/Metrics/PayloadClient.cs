@@ -22,7 +22,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
             builder.Bucket(configuration.InfluxDbBucket);
             builder.Org(configuration.InfluxDbOrg);
 
-            this.influxDBClient = InfluxDBClientFactory.Create(builder.Build());
+            this.influxDBClient = new InfluxDBClient(builder.Build());
         }
 
         public void AddPayload(MetricsTransmissionModel metrics)
@@ -66,16 +66,17 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
 
         public void TrySendPayload()
         {
-            if (this.pointDataList.Count >= this.configuration.MinimumDataPoints)
+            if (this.pointDataList.Count >= (this.configuration.MinimumDataPoints * 5))
             {
                 try
                 {
                     using (var writeApi = this.influxDBClient.GetWriteApi())
                     {
                         writeApi.WritePoints(this.pointDataList);
+                        Logger.Debug("InfluxDb write operation completed successfully!");
+                        Logger.Debug($"{this.pointDataList.Count} data points were sent.");
 
                         this.pointDataList.Clear();
-                        Logger.Debug("InfluxDb write operation completed successfully");
                     }
                 }
                 catch (Exception ex)

@@ -32,15 +32,17 @@ namespace Ve.Direct.InfluxDB.Collector
         {
             Logger.Info($"Collect Metrics ...");
 
-            var serialport = SerialPort.GetPortNames().FirstOrDefault();
-            if (serialport == null)
+            var serialPortName = SerialPort.GetPortNames().FirstOrDefault();
+            if (serialPortName == null)
             {
                 throw new NotSupportedException("No serial port found to read VEDirect.");
             }
 
-            Logger.Info($"Using Port: {serialport}");
+            Logger.Info($"Using Port: {serialPortName}");
 
-            this.serialPort = new SerialPort(serialport, 19200, Parity.None, 8, StopBits.One);
+            this.serialPort = new SerialPort(serialPortName, 19200, Parity.None, 8, StopBits.One);
+            this.serialPort.Open();
+
             this.header1 = '\r';
             this.header2 = '\n';
             this.hexmarker = ':';
@@ -68,25 +70,23 @@ namespace Ve.Direct.InfluxDB.Collector
             switch (this.state)
             {
                 case ReadState.WAIT_HEADER:
-                    if (byte1_as_char == this.header1)
-                        this.state = ReadState.WAIT_HEADER;
-                    else if (byte1_as_char == this.header2)
-                        this.state = ReadState.IN_KEY;
+                    if (byte1_as_char == this.header1) this.state = ReadState.WAIT_HEADER;
+                    else if (byte1_as_char == this.header2) this.state = ReadState.IN_KEY;
                     break;
+
                 case ReadState.IN_KEY:
                     if (byte1_as_char == this.delimiter)
                     {
-                        if (this.key == "Checksum")
-                            this.state = ReadState.IN_CHECKSUM;
-                        else
-                            this.state = ReadState.IN_VALUE;
+                        this.state = this.key == "Checksum"
+                            ? ReadState.IN_CHECKSUM
+                            : ReadState.IN_VALUE;
                     }
                     else
                     {
                         this.key += byte1_as_char;
                     }
-
                     break;
+
                 case ReadState.IN_VALUE:
                     if (byte1_as_char == this.header1)
                     {
@@ -103,6 +103,7 @@ namespace Ve.Direct.InfluxDB.Collector
                         this.value += byte1_as_char;
                     }
                     break;
+
                 case ReadState.IN_CHECKSUM:
                     this.key = "";
                     this.value = "";
@@ -115,10 +116,12 @@ namespace Ve.Direct.InfluxDB.Collector
                     Console.WriteLine("Warning: bytes_sum = {0}", this.bytes_sum);
                     this.bytes_sum = 0;
                     break;
+
                 case ReadState.HEX:
                     this.bytes_sum = 0;
                     if (byte1_as_char == this.header2) this.state = ReadState.WAIT_HEADER;
                     break;
+
                 default:
                     throw new ArgumentOutOfRangeException(string.Format("Unknown readstate {0}", this.state));
             }
@@ -127,7 +130,6 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public void WritePortDataToConsole(CancellationToken ct)
         {
-            this.serialPort.Open();
             while (!ct.IsCancellationRequested)
             {
                 var byte1 = (byte)this.serialPort.ReadByte();
@@ -153,9 +155,24 @@ namespace Ve.Direct.InfluxDB.Collector
             }
         }
 
+        public void WritePortDataToConsoleVersion2(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var rawData = this.serialPort.ReadLine();
+                Logger.Debug($"rawData: {rawData}");
+
+                var parsedData = this.ParseVeDirectData(rawData);
+
+                foreach (var kvp in parsedData)
+                {
+                    Console.WriteLine(kvp.Key + ": " + kvp.Value);
+                }
+            }
+        }
+
         public void ReadPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
-            this.serialPort.Open();
             while (!ct.IsCancellationRequested)
             {
                 var byte1 = (byte)this.serialPort.ReadByte();
@@ -168,6 +185,19 @@ namespace Ve.Direct.InfluxDB.Collector
                     }
                 }
             }
+        }
+
+        private Dictionary<string, string> ParseVeDirectData(string data)
+        {
+            var parsedData = new Dictionary<string, string>();
+            var entry = data.Split(' ');
+
+            if (entry.Length == 2)
+            {
+                parsedData[entry[0]] = entry[1];
+            }
+
+            return parsedData;
         }
     }
 }
