@@ -8,7 +8,7 @@ namespace Ve.Direct.InfluxDB.Collector
 {
     public class VEDirectReader
     {
-        private readonly SerialPort serialPort;
+        private readonly string serialPortName;
         private readonly char header1;
         private readonly char header2;
         private readonly char hexmarker;
@@ -32,12 +32,9 @@ namespace Ve.Direct.InfluxDB.Collector
         {
             ConsoleLogger.Info($"Collect Metrics ...");
 
-            var serialPortName = SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VEDirect.");
+            this.serialPortName = SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VEDirect.");
 
-            ConsoleLogger.Info($"Using Port: {serialPortName}");
-
-            this.serialPort = new SerialPort(serialPortName, 19200, Parity.None, 8, StopBits.One);
-            this.serialPort.Open();
+            ConsoleLogger.Info($"Using Port: {this.serialPortName}");
 
             this.header1 = '\r';
             this.header2 = '\n';
@@ -124,44 +121,34 @@ namespace Ve.Direct.InfluxDB.Collector
             return null;
         }
 
-        public void WritePortDataToConsole(CancellationToken ct)
+        public void ReadSerialPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
-            while (!ct.IsCancellationRequested)
+            using (var serialPort = new SerialPort(this.serialPortName, 19200, Parity.None, 8, StopBits.One))
             {
-                var inputByte = (byte)this.serialPort.ReadByte();
-                if (inputByte != 0)
+                serialPort.Open();
+
+                while (!ct.IsCancellationRequested)
                 {
-                    var packet = this.ProcessInputByte(inputByte);
-                    if (packet != null)
+                    var inputByte = (byte)serialPort.ReadByte();
+                    if (inputByte != 0)
                     {
-                        foreach (var kvp in packet)
+                        var packet = this.ProcessInputByte(inputByte);
+                        if (packet != null)
                         {
-                            if (kvp.Key.ToLower() == "pid")
+                            if (callbackFunction == null)
                             {
-                                Console.WriteLine(kvp.Key.GetVictronDeviceNameByPid());
+                                foreach (var kvp in packet)
+                                {
+                                    var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
+                                    Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
+                                }
+                                Console.WriteLine("---");
                             }
                             else
                             {
-                                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, kvp.Value);
+                                callbackFunction(packet);
                             }
-
                         }
-                    }
-                }
-            }
-        }
-
-        public void ReadPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var inputByte = (byte)this.serialPort.ReadByte();
-                if (inputByte != 0)
-                {
-                    var packet = this.ProcessInputByte(inputByte);
-                    if (packet != null)
-                    {
-                        callbackFunction(packet);
                     }
                 }
             }

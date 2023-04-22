@@ -38,7 +38,7 @@ namespace Ve.Direct.InfluxDB.Collector
 
         private void OnExecute(CancellationToken ct)
         {
-            ConsoleLogger.Init(this.DebugOutput, "2.2.0");
+            ConsoleLogger.Init(this.DebugOutput, "2.2.1");
             ConsoleLogger.Debug($"Current output setting: {this.OutputSetting}");
 
             try
@@ -58,11 +58,11 @@ namespace Ve.Direct.InfluxDB.Collector
                 switch (this.OutputSetting)
                 {
                     case OutputDefinition.Console:
-                        reader.WritePortDataToConsole(ct);
+                        reader.ReadSerialPortData(null, ct);
                         break;
                     case OutputDefinition.Influx:
                         var metricsCompositor = new MetricsCompositor(config);
-                        reader.ReadPortData(metricsCompositor.SendMetricsCallback, ct);
+                        reader.ReadSerialPortData(metricsCompositor.SendMetricsCallback, ct);
                         break;
                     default:
                         throw new System.ComponentModel.InvalidEnumArgumentException(nameof(this.OutputSetting));

@@ -48,7 +48,7 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public static string GetVictronDeviceNameByPid(this string self)
         {
-            return devices.ContainsKey(self) ? devices[self] : $"unknown device pid: {self}";
+            return devices.ContainsKey(self) ? $"{self} ({devices[self]})" : $"unknown device pid: {self}";
         }
     }
 }

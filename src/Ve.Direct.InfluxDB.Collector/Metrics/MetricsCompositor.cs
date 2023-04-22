@@ -99,6 +99,10 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                     case "LOAD": // Load output State (ON/OFF)
                         transmissionMetrics.LoadStatus = kvp.Value == "ON" ? 1 : 0;
                         break;
+                    case "H19": // Yield total, kWh
+                    case "H22": // Yield yesterday, kWh
+                    case "H23": // Maximum power yesterday, W
+                    case "HSDS": // Day sequence number, 0 to 365
                     default:
                         break;
                 }
