@@ -52,7 +52,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
 
         public void SendMetricsCallback(Dictionary<string, string> rawData)
         {
-            Logger.Debug("Just received new raw data!");
+            ConsoleLogger.Debug("Just received new raw data!");
 
             this.payloadClient.AddPayload(this.ConvertToMetricsTransmissionModel(rawData));
             this.payloadClient.TrySendPayload();

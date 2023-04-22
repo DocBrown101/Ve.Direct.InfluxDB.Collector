@@ -38,8 +38,8 @@ namespace Ve.Direct.InfluxDB.Collector
 
         private void OnExecute(CancellationToken ct)
         {
-            Logger.Init(this.DebugOutput, "2.1.0");
-            Logger.Debug($"Current output setting: {this.OutputSetting}");
+            ConsoleLogger.Init(this.DebugOutput, "2.2.0");
+            ConsoleLogger.Debug($"Current output setting: {this.OutputSetting}");
 
             try
             {
@@ -59,7 +59,6 @@ namespace Ve.Direct.InfluxDB.Collector
                 {
                     case OutputDefinition.Console:
                         reader.WritePortDataToConsole(ct);
-                        //reader.WritePortDataToConsoleVersion2(ct);
                         break;
                     case OutputDefinition.Influx:
                         var metricsCompositor = new MetricsCompositor(config);
@@ -71,16 +70,7 @@ namespace Ve.Direct.InfluxDB.Collector
             }
             catch (Exception e)
             {
-                Logger.Error(e.Message);
-
-                var innerException = e.InnerException;
-
-                while (innerException != null)
-                {
-                    Logger.Error(innerException.Message);
-                    innerException = innerException.InnerException;
-                }
-
+                ConsoleLogger.Error(e);
                 Environment.Exit(1);
             }
         }

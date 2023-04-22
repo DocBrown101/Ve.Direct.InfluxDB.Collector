@@ -33,7 +33,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                     .Tag("host", Environment.MachineName)
                     .Field("voltage", metrics.BatteryMillivolt)
                     .Field("current", metrics.BatteryMillicurrent)
-                    .Field("power", metrics.BatteryPowerCalculated)
+                    .Field("power", metrics.BatteryMilliwattsCalculated)
                     .Timestamp(payloadDateTime, WritePrecision.Ms));
 
             this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_panel")
@@ -46,7 +46,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
             this.pointDataList.Add(PointData.Measurement($"{this.configuration.MetricPrefix}_load")
                     .Tag("host", Environment.MachineName)
                     .Field("current", metrics.LoadMillicurrent)
-                    .Field("power", metrics.LoadPowerCalculated)
+                    .Field("power", metrics.LoadMilliwattsCalculated)
                     .Field("Status", metrics.LoadStatus)
                     .Timestamp(payloadDateTime, WritePrecision.Ms));
 
@@ -73,15 +73,15 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                     using (var writeApi = this.influxDBClient.GetWriteApi())
                     {
                         writeApi.WritePoints(this.pointDataList);
-                        Logger.Debug("InfluxDb write operation completed successfully!");
-                        Logger.Debug($"{this.pointDataList.Count} data points were sent.");
+                        ConsoleLogger.Debug("InfluxDb write operation completed successfully!");
+                        ConsoleLogger.Debug($"{this.pointDataList.Count} data points were sent.");
 
                         this.pointDataList.Clear();
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error(ex.Message);
+                    ConsoleLogger.Error(ex.Message);
                 }
             }
         }

@@ -30,15 +30,11 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public VEDirectReader()
         {
-            Logger.Info($"Collect Metrics ...");
+            ConsoleLogger.Info($"Collect Metrics ...");
 
-            var serialPortName = SerialPort.GetPortNames().FirstOrDefault();
-            if (serialPortName == null)
-            {
-                throw new NotSupportedException("No serial port found to read VEDirect.");
-            }
+            var serialPortName = SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VEDirect.");
 
-            Logger.Info($"Using Port: {serialPortName}");
+            ConsoleLogger.Info($"Using Port: {serialPortName}");
 
             this.serialPort = new SerialPort(serialPortName, 19200, Parity.None, 8, StopBits.One);
             this.serialPort.Open();
@@ -54,28 +50,28 @@ namespace Ve.Direct.InfluxDB.Collector
             this.dict = new Dictionary<string, string>();
         }
 
-        public Dictionary<string, string> input(byte byte1)
+        public Dictionary<string, string> ProcessInputByte(byte inputByte)
         {
-            var byte1_as_char = Convert.ToChar(byte1);
-            if (byte1_as_char == this.hexmarker && this.state != ReadState.IN_CHECKSUM)
+            var inputByteAsChar = Convert.ToChar(inputByte);
+            if (inputByteAsChar == this.hexmarker && this.state != ReadState.IN_CHECKSUM)
             {
                 this.state = ReadState.HEX;
             }
 
             if (this.state != ReadState.HEX)
             {
-                this.bytes_sum += byte1;
+                this.bytes_sum += inputByte;
             }
 
             switch (this.state)
             {
                 case ReadState.WAIT_HEADER:
-                    if (byte1_as_char == this.header1) this.state = ReadState.WAIT_HEADER;
-                    else if (byte1_as_char == this.header2) this.state = ReadState.IN_KEY;
+                    if (inputByteAsChar == this.header1) this.state = ReadState.WAIT_HEADER;
+                    else if (inputByteAsChar == this.header2) this.state = ReadState.IN_KEY;
                     break;
 
                 case ReadState.IN_KEY:
-                    if (byte1_as_char == this.delimiter)
+                    if (inputByteAsChar == this.delimiter)
                     {
                         this.state = this.key == "Checksum"
                             ? ReadState.IN_CHECKSUM
@@ -83,12 +79,12 @@ namespace Ve.Direct.InfluxDB.Collector
                     }
                     else
                     {
-                        this.key += byte1_as_char;
+                        this.key += inputByteAsChar;
                     }
                     break;
 
                 case ReadState.IN_VALUE:
-                    if (byte1_as_char == this.header1)
+                    if (inputByteAsChar == this.header1)
                     {
                         this.state = ReadState.WAIT_HEADER;
                         if (this.dict.ContainsKey(this.key))
@@ -100,7 +96,7 @@ namespace Ve.Direct.InfluxDB.Collector
                     }
                     else
                     {
-                        this.value += byte1_as_char;
+                        this.value += inputByteAsChar;
                     }
                     break;
 
@@ -119,7 +115,7 @@ namespace Ve.Direct.InfluxDB.Collector
 
                 case ReadState.HEX:
                     this.bytes_sum = 0;
-                    if (byte1_as_char == this.header2) this.state = ReadState.WAIT_HEADER;
+                    if (inputByteAsChar == this.header2) this.state = ReadState.WAIT_HEADER;
                     break;
 
                 default:
@@ -132,10 +128,10 @@ namespace Ve.Direct.InfluxDB.Collector
         {
             while (!ct.IsCancellationRequested)
             {
-                var byte1 = (byte)this.serialPort.ReadByte();
-                if (byte1 != 0)
+                var inputByte = (byte)this.serialPort.ReadByte();
+                if (inputByte != 0)
                 {
-                    var packet = this.input(byte1);
+                    var packet = this.ProcessInputByte(inputByte);
                     if (packet != null)
                     {
                         foreach (var kvp in packet)
@@ -155,49 +151,20 @@ namespace Ve.Direct.InfluxDB.Collector
             }
         }
 
-        public void WritePortDataToConsoleVersion2(CancellationToken ct)
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var rawData = this.serialPort.ReadLine();
-                Logger.Debug($"rawData: {rawData}");
-
-                var parsedData = this.ParseVeDirectData(rawData);
-
-                foreach (var kvp in parsedData)
-                {
-                    Console.WriteLine(kvp.Key + ": " + kvp.Value);
-                }
-            }
-        }
-
         public void ReadPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
-                var byte1 = (byte)this.serialPort.ReadByte();
-                if (byte1 != 0)
+                var inputByte = (byte)this.serialPort.ReadByte();
+                if (inputByte != 0)
                 {
-                    var packet = this.input(byte1);
+                    var packet = this.ProcessInputByte(inputByte);
                     if (packet != null)
                     {
                         callbackFunction(packet);
                     }
                 }
             }
-        }
-
-        private Dictionary<string, string> ParseVeDirectData(string data)
-        {
-            var parsedData = new Dictionary<string, string>();
-            var entry = data.Split(' ');
-
-            if (entry.Length == 2)
-            {
-                parsedData[entry[0]] = entry[1];
-            }
-
-            return parsedData;
         }
     }
 }
