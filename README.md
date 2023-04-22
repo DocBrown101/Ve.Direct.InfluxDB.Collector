@@ -17,9 +17,9 @@ Collects data from your Victron SmartSolar MPPT and sends it to InfluxDB
 
 If there are only a few centimeters between the MPPT and the Raspberry Pi, no USB adapter from Victron is needed!
 
-![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/No-VEDirect-USB)
+![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/No-VEDirect-USB.jpg)
 
-![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/Connect-VEDirect-To-RPi)
+![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/Connect-VEDirect-To-RPi.jpg)
 
 ## Example Usage
 ```
