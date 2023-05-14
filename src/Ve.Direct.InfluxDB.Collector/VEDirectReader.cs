@@ -106,7 +106,7 @@ namespace Ve.Direct.InfluxDB.Collector
                         this.bytes_sum = 0;
                         return this.dict;
                     }
-                    Console.WriteLine("Warning: bytes_sum = {0}", this.bytes_sum);
+                    ConsoleLogger.Info($"Warning: bytes_sum = {this.bytes_sum}");
                     this.bytes_sum = 0;
                     break;
 
@@ -123,31 +123,34 @@ namespace Ve.Direct.InfluxDB.Collector
 
         public void ReadSerialPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
-            using (var serialPort = new SerialPort(this.serialPortName, 19200, Parity.None, 8, StopBits.One))
+            using (var serialPort = new SerialPort(this.serialPortName, 19200))
             {
+                serialPort.ReadTimeout = 5000;
                 serialPort.Open();
 
                 while (!ct.IsCancellationRequested)
                 {
                     var inputByte = (byte)serialPort.ReadByte();
-                    if (inputByte != 0)
+                    if (inputByte == 0)
                     {
-                        var packet = this.ProcessInputByte(inputByte);
-                        if (packet != null)
+                        continue;
+                    }
+
+                    var packet = this.ProcessInputByte(inputByte);
+                    if (packet != null)
+                    {
+                        if (callbackFunction == null)
                         {
-                            if (callbackFunction == null)
+                            foreach (var kvp in packet)
                             {
-                                foreach (var kvp in packet)
-                                {
-                                    var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
-                                    Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
-                                }
-                                Console.WriteLine("---");
+                                var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
+                                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
                             }
-                            else
-                            {
-                                callbackFunction(packet);
-                            }
+                            Console.WriteLine("---");
+                        }
+                        else
+                        {
+                            callbackFunction(packet);
                         }
                     }
                 }
