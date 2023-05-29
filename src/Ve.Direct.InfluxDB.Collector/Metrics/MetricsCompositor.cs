@@ -45,7 +45,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
     {
         private readonly PayloadClient payloadClient;
 
-        public MetricsCompositor(MetricsConfigurationModel configuration)
+        public MetricsCompositor(CollectorConfiguration configuration)
         {
             this.payloadClient = new PayloadClient(configuration);
         }
@@ -55,7 +55,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
             ConsoleLogger.Debug("Just received new raw data!");
 
             this.payloadClient.AddPayload(this.ConvertToMetricsTransmissionModel(rawData));
-            this.payloadClient.TrySendPayload();
+            _ = this.payloadClient.TrySendPayload();
         }
 
         private MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data)

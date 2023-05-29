@@ -1,4 +1,4 @@
-﻿namespace Ve.Direct.InfluxDB.Collector
+﻿namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
 {
     using System;
     using System.Collections.Generic;
@@ -6,13 +6,13 @@
     using System.Linq;
     using System.Threading;
 
-    public class VEDirectReaderWithChecksum
+    public class VEDirectReaderWithChecksum : IReader
     {
         private readonly string serialPortName;
 
-        public VEDirectReaderWithChecksum()
+        public VEDirectReaderWithChecksum(string serialPortName)
         {
-            this.serialPortName = SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VEDirect.");
+            this.serialPortName = serialPortName ?? SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VE.Direct data!");
 
             ConsoleLogger.Info($"Using Port: {this.serialPortName}");
         }
@@ -56,7 +56,7 @@
                             {
                                 inputData[currentKey] = currentValue;
                             }
-                            
+
                             currentKey = string.Empty;
                             currentValue = string.Empty;
                         }

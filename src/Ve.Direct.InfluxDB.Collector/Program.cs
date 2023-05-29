@@ -1,78 +1,51 @@
 ﻿using System;
-using System.Threading;
+using System.ComponentModel;
+using System.Threading.Tasks;
 using McMaster.Extensions.CommandLineUtils;
 using Ve.Direct.InfluxDB.Collector.Metrics;
+using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector
 {
     public class Program
     {
-        public static void Main(string[] args) => CommandLineApplication.Execute<Program>(args);
-
-        public enum OutputDefinition
+        public static int Main(string[] args)
         {
-            Console,
-            Influx
-        }
-
-        [Option("-o|--output", CommandOptionType.SingleValue, Description = "Console or Influx. Defaults to Console")]
-        public OutputDefinition OutputSetting { get; set; }
-
-        [Option("--influxDbUrl", Description = "The InfluxDb Url. E.g. http://192.168.0.220:8086")]
-        public string InfluxDbUrl { get; } = "http://192.168.0.220:8086";
-
-        [Option("--influxDbBucket", Description = "The InfluxDb Bucket name. Defaults to solar")]
-        public string InfluxDbBucket { get; } = "solar";
-
-        [Option("--influxDbOrg", Description = "The InfluxDb Org name. Defaults to home")]
-        public string InfluxDbOrg { get; } = "home";
-
-        [Option("--metricPrefix", Description = "Prefix all metrics pushed into the InfluxDb. Defaults to ve_direct")]
-        public string MetricPrefix { get; } = "ve_direct";
-
-        [Option("--interval", Description = "Minimum number of data points for transmission. Defaults to 10")]
-        public int MinimumDataPoints { get; } = 10;
-
-        [Option("--debugOutput", Description = "By default it is disabled.")]
-        public bool DebugOutput { get; } = false;
-
-        private void OnExecute(CancellationToken ct)
-        {
-            ConsoleLogger.Init(this.DebugOutput, "2.2.1");
-            ConsoleLogger.Debug($"Current output setting: {this.OutputSetting}");
-
-            try
+            var app = new CommandLineApplication();
+            var config = new CollectorConfiguration(app);
+            app.HelpOption();
+            app.OnExecuteAsync(async cancellationToken =>
             {
-                var config = new MetricsConfigurationModel()
-                {
-                    InfluxDbUrl = InfluxDbUrl,
-                    MinimumDataPoints = MinimumDataPoints,
-                    InfluxDbBucket = InfluxDbBucket,
-                    InfluxDbOrg = InfluxDbOrg,
-                    MetricPrefix = MetricPrefix
-                };
-                config.Validate();
+                ConsoleLogger.Init(config.DebugOutput, "2.3.0");
+                ConsoleLogger.Debug($"Current output setting: {config.Output}");
 
-                var reader = new VEDirectReader();
-
-                switch (this.OutputSetting)
+                try
                 {
-                    case OutputDefinition.Console:
-                        reader.ReadSerialPortData(null, ct);
-                        break;
-                    case OutputDefinition.Influx:
-                        var metricsCompositor = new MetricsCompositor(config);
-                        reader.ReadSerialPortData(metricsCompositor.SendMetricsCallback, ct);
-                        break;
-                    default:
-                        throw new System.ComponentModel.InvalidEnumArgumentException(nameof(this.OutputSetting));
+                    IReader reader = config.UseChecksums ? new VEDirectReaderWithChecksum(config.SerialPortName) : new VEDirectReader(config.SerialPortName);
+
+                    switch (config.Output)
+                    {
+                        case CollectorConfiguration.OutputDefinition.Console:
+                            reader.ReadSerialPortData(null, cancellationToken);
+                            break;
+                        case CollectorConfiguration.OutputDefinition.Influx:
+                            var metricsCompositor = new MetricsCompositor(config);
+                            reader.ReadSerialPortData(metricsCompositor.SendMetricsCallback, cancellationToken);
+                            break;
+                        default:
+                            throw new InvalidEnumArgumentException(nameof(config.Output));
+                    }
+
+                    await Task.CompletedTask;
                 }
-            }
-            catch (Exception e)
-            {
-                ConsoleLogger.Error(e);
-                Environment.Exit(1);
-            }
+                catch (Exception e)
+                {
+                    ConsoleLogger.Error(e);
+                    Environment.Exit(1);
+                }
+            });
+
+            return app.Execute(args);
         }
     }
 }
