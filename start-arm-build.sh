@@ -1,10 +1,11 @@
 #! /bin/sh
 dotnet publish ./src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj \
-	   --runtime linux-x64 \
+	   --runtime linux-arm \
 	   --self-contained false \
 	   -c Release \
 	   -v minimal \
-	   -o ./build \
+	   -f net7.0 \
+	   -o ./arm-build \
 	   -p:PublishReadyToRun=false \
 	   -p:PublishSingleFile=true \
 	   -p:CopyOutputSymbolsToPublishDirectory=false \
