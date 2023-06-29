@@ -33,7 +33,7 @@
         {
             this.outputDefinition = app.Option<OutputDefinition>("-o|--output", "Console or Influx", CommandOptionType.SingleValue);
             this.interval = app.Option<int>("-i|--interval", "Interval in seconds", CommandOptionType.SingleValue).Accepts(v => v.Range(10, 3600));
-            this.serialPortName = app.Option<string>("-s", "The name of the port to use. USB VE.Direct cable would be ttyUSB0", CommandOptionType.SingleOrNoValue);
+            this.serialPortName = app.Option<string>("-p|--port", "The name of the port to use. USB VE.Direct cable would be /dev/ttyUSB0", CommandOptionType.SingleValue);
             this.influxDbUrl = app.Option<string>("--influxDbUrl", "The InfluxDb Url", CommandOptionType.SingleValue);
             this.influxDbBucket = app.Option<string>("--influxDbBucket", "The InfluxDb Bucket name", CommandOptionType.SingleValue);
             this.influxDbOrg = app.Option<string>("--influxDbOrg", "The InfluxDb Org name", CommandOptionType.SingleValue);
