@@ -7,7 +7,7 @@ using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector
 {
-    public class Program
+    public static class Program
     {
         public static int Main(string[] args)
         {

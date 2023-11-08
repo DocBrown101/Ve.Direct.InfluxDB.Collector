@@ -45,7 +45,6 @@
 
             this.interval.DefaultValue = 30;
 
-            // NOSONAR
             this.influxDbUrl.DefaultValue = "http://192.168.0.220:8086";
             this.influxDbBucket.DefaultValue = "solar";
             this.influxDbOrg.DefaultValue = "home";
