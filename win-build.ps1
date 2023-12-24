@@ -8,7 +8,7 @@ dotnet publish "$PSScriptRoot\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.InfluxD
 	   -c Release `
 	   -v minimal `
 	   -o ./build `
-	   -f net7.0 `
+	   -f net8.0 `
 	   -p:PublishReadyToRun=false `
 	   -p:PublishSingleFile=true `
 	   -p:CopyOutputSymbolsToPublishDirectory=false `
