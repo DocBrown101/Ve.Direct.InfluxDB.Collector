@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using McMaster.Extensions.CommandLineUtils;
@@ -26,7 +27,7 @@ namespace Ve.Direct.InfluxDB.Collector
                     switch (config.Output)
                     {
                         case CollectorConfiguration.OutputDefinition.Console:
-                            reader.ReadSerialPortData(null, cancellationToken);
+                            reader.ReadSerialPortData(WriteMetricsCallback, cancellationToken);
                             break;
                         case CollectorConfiguration.OutputDefinition.Influx:
                             var metricsCompositor = new MetricsCompositor(config);
@@ -46,6 +47,16 @@ namespace Ve.Direct.InfluxDB.Collector
             });
 
             return app.Execute(args);
+        }
+
+        private static void WriteMetricsCallback(Dictionary<string, string> serialData)
+        {
+            foreach (var kvp in serialData)
+            {
+                var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
+                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
+            }
+            Console.WriteLine("---");
         }
     }
 }

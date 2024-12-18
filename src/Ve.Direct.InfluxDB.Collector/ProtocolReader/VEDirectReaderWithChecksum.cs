@@ -74,23 +74,11 @@
             }
         }
 
-        private void ProcessData(Action<Dictionary<string, string>> callbackFunction, Dictionary<string, string> data, List<byte> receivedBytes)
+        private void ProcessData(Action<Dictionary<string, string>> callbackFunction, Dictionary<string, string> serialData, List<byte> receivedBytes)
         {
             if (this.IsChecksumValid(receivedBytes))
             {
-                if (callbackFunction == null)
-                {
-                    foreach (var entry in data)
-                    {
-                        var outputValue = entry.Key.ToLower() == "pid" ? entry.Value.GetVictronDeviceNameByPid() : entry.Value;
-                        Console.WriteLine("KeyValue: {0} - {1}", entry.Key, outputValue);
-                    }
-                    Console.WriteLine("---");
-                }
-                else
-                {
-                    callbackFunction(data);
-                }
+                callbackFunction(serialData);
             }
             else
             {

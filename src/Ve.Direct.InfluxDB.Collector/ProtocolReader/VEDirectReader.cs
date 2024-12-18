@@ -8,7 +8,7 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
 {
     public class VEDirectReader : IReader
     {
-        private readonly Dictionary<string, string> dict;
+        private readonly Dictionary<string, string> serialData;
         private readonly string serialPortName;
         private readonly char header1;
         private readonly char header2;
@@ -30,7 +30,7 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
 
         public VEDirectReader(string serialPortName)
         {
-            this.dict = new Dictionary<string, string>();
+            this.serialData = new Dictionary<string, string>();
             this.serialPortName = serialPortName ?? SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VE.Direct data!");
 
             ConsoleLogger.Info($"Using Port: {this.serialPortName}");
@@ -46,7 +46,7 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
             this.state = ReadState.WAIT_HEADER;
         }
 
-        public Dictionary<string, string> ProcessInputByte(byte inputByte)
+        public bool ProcessInputByte(byte inputByte)
         {
             var inputByteAsChar = Convert.ToChar(inputByte);
             if (inputByteAsChar == this.hexmarker && this.state != ReadState.IN_CHECKSUM)
@@ -83,10 +83,10 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
                     if (inputByteAsChar == this.header1)
                     {
                         this.state = ReadState.WAIT_HEADER;
-                        if (this.dict.ContainsKey(this.key))
-                            this.dict[this.key] = this.value;
+                        if (this.serialData.ContainsKey(this.key))
+                            this.serialData[this.key] = this.value;
                         else
-                            this.dict.Add(this.key, this.value);
+                            this.serialData.Add(this.key, this.value);
                         this.key = "";
                         this.value = "";
                     }
@@ -103,7 +103,7 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
                     if (this.bytes_sum == 0)
                     {
                         this.bytes_sum = 0;
-                        return this.dict;
+                        return true;
                     }
                     ConsoleLogger.Info($"Warning: bytes_sum = {this.bytes_sum}");
                     this.bytes_sum = 0;
@@ -117,7 +117,7 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
                 default:
                     throw new ArgumentOutOfRangeException(string.Format("Unknown readstate {0}", this.state));
             }
-            return null;
+            return false;
         }
 
         public void ReadSerialPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
@@ -135,22 +135,10 @@ namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
                         continue;
                     }
 
-                    var packet = this.ProcessInputByte(inputByte);
-                    if (packet != null)
+                    var allBytesReceived = this.ProcessInputByte(inputByte);
+                    if (allBytesReceived)
                     {
-                        if (callbackFunction == null)
-                        {
-                            foreach (var kvp in packet)
-                            {
-                                var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
-                                Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
-                            }
-                            Console.WriteLine("---");
-                        }
-                        else
-                        {
-                            callbackFunction(packet);
-                        }
+                        callbackFunction(this.serialData);
                     }
                 }
             }
