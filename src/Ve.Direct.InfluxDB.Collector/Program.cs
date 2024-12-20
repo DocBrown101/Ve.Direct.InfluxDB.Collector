@@ -17,7 +17,7 @@ namespace Ve.Direct.InfluxDB.Collector
             app.HelpOption();
             app.OnExecuteAsync(async cancellationToken =>
             {
-                ConsoleLogger.Init(config.DebugOutput, "3.0.0");
+                ConsoleLogger.Init(config.DebugOutput, "3.1.0");
                 ConsoleLogger.Debug($"Current output setting: {config.Output}");
 
                 try
@@ -53,7 +53,7 @@ namespace Ve.Direct.InfluxDB.Collector
         {
             foreach (var kvp in serialData)
             {
-                var outputValue = kvp.Key.ToLower() == "pid" ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
+                var outputValue = kvp.Key.Equals("pid", StringComparison.CurrentCultureIgnoreCase) ? kvp.Value.GetVictronDeviceNameByPid() : kvp.Value;
                 Console.WriteLine("KeyValue: {0} - {1}", kvp.Key, outputValue);
             }
             Console.WriteLine("---");

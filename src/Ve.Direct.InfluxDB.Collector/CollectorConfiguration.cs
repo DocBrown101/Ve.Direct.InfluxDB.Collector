@@ -29,6 +29,12 @@
 
         public bool DebugOutput => this.debugOutput.ParsedValue;
 
+        public enum OutputDefinition
+        {
+            Console,
+            Influx
+        }
+
         public CollectorConfiguration(CommandLineApplication app)
         {
             this.outputDefinition = app.Option<OutputDefinition>("-o|--output", "Console or Influx", CommandOptionType.SingleValue);
@@ -41,20 +47,20 @@
             this.useChecksums = app.Option<bool>("-c", "Use checksums?", CommandOptionType.SingleOrNoValue);
             this.debugOutput = app.Option<bool>("--debugOutput", "Debug?", CommandOptionType.SingleOrNoValue);
 
-            this.outputDefinition.DefaultValue = OutputDefinition.Console;
+            this.SetDefaultValues();
+        }
 
+        private void SetDefaultValues()
+        {
+            this.outputDefinition.DefaultValue = OutputDefinition.Console;
             this.interval.DefaultValue = 30;
 
             this.influxDbUrl.DefaultValue = "http://192.168.0.220:8086";
             this.influxDbBucket.DefaultValue = "solar";
             this.influxDbOrg.DefaultValue = "home";
             this.influxMetricPrefix.DefaultValue = "ve_direct";
-        }
-
-        public enum OutputDefinition
-        {
-            Console,
-            Influx
+            this.useChecksums.DefaultValue = false;
+            this.debugOutput.DefaultValue = false;
         }
     }
 }
