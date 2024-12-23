@@ -34,23 +34,27 @@ namespace Ve.Direct.InfluxDB.Collector
             Console.ForegroundColor = oldForeground;
         }
 
-        public static void Error(string message)
+        public static void Error(string message, string prefix = "ERROR")
         {
             var oldForeground = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.Error.WriteLine($"{DateTime.Now:o} ERROR {message}");
+            Console.WriteLine($"{DateTime.Now:o} {prefix} {message}");
             Console.ForegroundColor = oldForeground;
         }
 
         public static void Error(Exception exception)
         {
-            Error(exception.Message);
+            Error(exception.Message, "EXCEPTION");
+
+            if (writeDebug)
+            {
+                Error(exception.StackTrace, "StackTrace");
+            }
 
             var innerException = exception.InnerException;
-
             while (innerException != null)
             {
-                Error(innerException.Message);
+                Error(innerException.Message, "INNEREXCEPTION");
                 innerException = innerException.InnerException;
             }
         }

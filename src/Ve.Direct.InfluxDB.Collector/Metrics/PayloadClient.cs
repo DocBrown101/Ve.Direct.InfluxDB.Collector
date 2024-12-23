@@ -17,7 +17,7 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
         public PayloadClient(CollectorConfiguration configuration)
         {
             this.configuration = configuration;
-            this.pointDataList = new List<PointData>();
+            this.pointDataList = [];
 
             var builder = new InfluxDBClientOptions.Builder();
             builder.Url(configuration.InfluxDbUrl);
@@ -78,16 +78,16 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                 try
                 {
                     var writeApi = this.influxDBClient.GetWriteApiAsync();
-                    await writeApi.WritePointsAsync(this.pointDataList);
+                    await writeApi.WritePointsAsync(this.pointDataList).ConfigureAwait(false);
 
                     ConsoleLogger.Debug("InfluxDb write operation completed successfully!");
                     ConsoleLogger.Debug($"{this.pointDataList.Count} data points were sent.");
 
                     this.pointDataList.Clear();
                 }
-                catch (Exception ex)
+                catch (Exception e)
                 {
-                    ConsoleLogger.Error(ex.Message);
+                    ConsoleLogger.Error(e);
                 }
             }
         }

@@ -41,24 +41,19 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
     /// '117': 'Invalid/incompatible firmware'
     /// '119': 'User settings invalid'
     /// </summary>
-    public class MetricsCompositor
+    public class MetricsCompositor(CollectorConfiguration configuration)
     {
-        private readonly PayloadClient payloadClient;
-
-        public MetricsCompositor(CollectorConfiguration configuration)
-        {
-            this.payloadClient = new PayloadClient(configuration);
-        }
+        private readonly PayloadClient payloadClient = new(configuration);
 
         public void SendMetricsCallback(Dictionary<string, string> rawData)
         {
             ConsoleLogger.Debug("Just received new raw data!");
 
-            this.payloadClient.AddPayload(this.ConvertToMetricsTransmissionModel(rawData));
+            this.payloadClient.AddPayload(ConvertToMetricsTransmissionModel(rawData));
             _ = this.payloadClient.TrySendPayload();
         }
 
-        private MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data)
+        private static MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data)
         {
             var transmissionMetrics = new MetricsTransmissionModel();
 
@@ -67,34 +62,34 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                 switch (kvp.Key)
                 {
                     case "V": // Battery voltage (mV)
-                        transmissionMetrics.BatteryMillivolt = this.ToLong(kvp.Value);
+                        transmissionMetrics.BatteryMillivolt = ToLong(kvp.Value);
                         break;
                     case "I": // Battery current (mA)
-                        transmissionMetrics.BatteryMillicurrent = this.ToLong(kvp.Value);
+                        transmissionMetrics.BatteryMillicurrent = ToLong(kvp.Value);
                         break;
                     case "VPV": // Panel voltage (mV)
-                        transmissionMetrics.PanelMillivolt = this.ToLong(kvp.Value);
+                        transmissionMetrics.PanelMillivolt = ToLong(kvp.Value);
                         break;
                     case "PPV": // Panel Power (W)
-                        transmissionMetrics.PanelPower = this.ToLong(kvp.Value);
+                        transmissionMetrics.PanelPower = ToLong(kvp.Value);
                         break;
                     case "IL": // Load Current (mA)
-                        transmissionMetrics.LoadMillicurrent = this.ToLong(kvp.Value);
+                        transmissionMetrics.LoadMillicurrent = ToLong(kvp.Value);
                         break;
                     case "H20": // Yield today (0.01 Kwh)
-                        transmissionMetrics.TodayYield = this.ToLong(kvp.Value) * 10;
+                        transmissionMetrics.TodayYield = ToLong(kvp.Value) * 10;
                         break;
                     case "H21": // Maximum power today (W)
-                        transmissionMetrics.TodayPower = this.ToLong(kvp.Value);
+                        transmissionMetrics.TodayPower = ToLong(kvp.Value);
                         break;
                     case "CS": // State of operation
-                        transmissionMetrics.VICTRON_CS_Status = this.ToInt(kvp.Value);
+                        transmissionMetrics.VICTRON_CS_Status = ToInt(kvp.Value);
                         break;
                     case "ERR": // Error state
-                        transmissionMetrics.VICTRON_ERR_Status = this.ToInt(kvp.Value);
+                        transmissionMetrics.VICTRON_ERR_Status = ToInt(kvp.Value);
                         break;
                     case "MPPT": // Tracker operation mode
-                        transmissionMetrics.VICTRON_MPPT_Status = this.ToInt(kvp.Value);
+                        transmissionMetrics.VICTRON_MPPT_Status = ToInt(kvp.Value);
                         break;
                     case "LOAD": // Load output State (ON/OFF)
                         transmissionMetrics.LoadStatus = kvp.Value == "ON" ? 1 : 0;
@@ -113,12 +108,12 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
             return transmissionMetrics;
         }
 
-        private long ToLong(string value)
+        private static long ToLong(string value)
         {
             return value != null ? long.Parse(value) : 0;
         }
 
-        private int ToInt(string value)
+        private static int ToInt(string value)
         {
             return value != null ? int.Parse(value) : 0;
         }
