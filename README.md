@@ -2,9 +2,11 @@
 
 Ve.Direct.InfluxDB.Collector is a dedicated data collector that bridges the gap between Victron SmartSolar MPPT devices and InfluxDB. The primary aim of this project is to collect, process, and store data from Victron SmartSolar MPPT devices using the Ve.Direct protocol into an InfluxDB database. The resulting dataset can then be visualized using a Grafana dashboard, providing users with a detailed, real-time overview of their solar energy system's performance.
 
+[![Quality gate](https://sonarcloud.io/api/project_badges/quality_gate?project=DocBrown101_Ve.Direct.InfluxDB.Collector)](https://sonarcloud.io/summary/new_code?id=DocBrown101_Ve.Direct.InfluxDB.Collector)
+
 [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=DocBrown101_Ve.Direct.InfluxDB.Collector&metric=sqale_rating)](https://sonarcloud.io/dashboard?id=DocBrown101_Ve.Direct.InfluxDB.Collector)
-[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=DocBrown101_Ve.Direct.InfluxDB.Collector&metric=ncloc)](https://sonarcloud.io/dashboard?id=DocBrown101_Ve.Direct.InfluxDB.Collector)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=DocBrown101_Ve.Direct.InfluxDB.Collector&metric=security_rating)](https://sonarcloud.io/dashboard?id=DocBrown101_Ve.Direct.InfluxDB.Collector)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=DocBrown101_Ve.Direct.InfluxDB.Collector&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=DocBrown101_Ve.Direct.InfluxDB.Collector)
 
 ![Preview](https://github.com/DocBrown101/Ve.Direct.InfluxDB.Collector/blob/main/docs/image1.jpg)
 
