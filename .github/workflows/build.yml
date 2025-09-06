@@ -20,7 +20,10 @@ jobs:
         fetch-depth: 0
     - name: SonarQube Scan
       uses: SonarSource/sonarqube-scan-action@v5.3.1
+      with:
+        projectBaseDir: app/src
+        args: >
+          -Dsonar.organization=docbrown101
+          -Dsonar.projectKey=DocBrown101_Ve.Direct.InfluxDB.Collector
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_PROJECT_KEY: DocBrown101_Ve.Direct.InfluxDB.Collector
-        SONAR_ORGANIZATION: docbrown101
