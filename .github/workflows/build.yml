@@ -21,7 +21,7 @@ jobs:
     - name: SonarQube Scan
       uses: SonarSource/sonarqube-scan-action@v5.3.1
       with:
-        projectBaseDir: app/src
+        projectBaseDir: src
         args: >
           -Dsonar.organization=docbrown101
           -Dsonar.projectKey=DocBrown101_Ve.Direct.InfluxDB.Collector
