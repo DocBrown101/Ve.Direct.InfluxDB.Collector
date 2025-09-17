@@ -35,7 +35,7 @@ jobs:
       - name: SonarScanner for .NET - Begin
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        shell: powershell
+        shell: bash
         run: |
           dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.token="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io"
           dotnet build src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj
