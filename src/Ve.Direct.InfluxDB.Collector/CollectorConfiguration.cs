@@ -58,7 +58,9 @@
             this.useChecksums.DefaultValue = false;
             this.debugOutput.DefaultValue = false;
 
+#pragma warning disable S5332
             this.influxDbUrl.DefaultValue = "http://192.168.0.220:8086";
+#pragma warning restore S5332
             this.influxDbBucket.DefaultValue = "solar";
             this.influxDbOrg.DefaultValue = "home";
             this.influxMetricPrefix.DefaultValue = "ve_direct";
