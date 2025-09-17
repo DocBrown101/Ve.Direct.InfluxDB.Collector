@@ -16,7 +16,7 @@ namespace Tests
                 PanelPower = 231,
                 PanelMillivolt = 40000
             };
-            model.CalculateMissingData();
+            model.CalculateMissingMetrics();
 
             Assert.Equal(21248, model.BatteryMilliwattsCalculated);
             Assert.Equal(21248, model.LoadMilliwattsCalculated);

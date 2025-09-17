@@ -32,8 +32,13 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
 
         public int VICTRON_MPPT_Status { get; set; }
 
-        public void CalculateMissingData()
+        public void CalculateMissingMetrics()
         {
+            if (this.LoadStatus > 0 && this.BatteryMillicurrent < 0)
+            {
+                this.LoadMillicurrent = Math.Max(this.LoadMillicurrent, Math.Abs(this.BatteryMillicurrent));
+            }
+
             this.CalculateBatteryPower();
             this.CalculatePanelCurrent();
             this.CalculateLoadPower();

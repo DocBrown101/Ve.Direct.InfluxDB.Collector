@@ -43,17 +43,18 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
     /// </summary>
     public class MetricsCompositor(CollectorConfiguration configuration)
     {
+        private readonly CollectorConfiguration collectorConfiguration = configuration;
         private readonly PayloadClient payloadClient = new(configuration);
 
         public void SendMetricsCallback(Dictionary<string, string> rawData)
         {
             ConsoleLogger.Debug("Just received new raw data!");
 
-            this.payloadClient.AddPayload(ConvertToMetricsTransmissionModel(rawData));
+            this.payloadClient.AddPayload(ConvertToMetricsTransmissionModel(rawData, this.collectorConfiguration.CalculateMissingMetrics));
             _ = this.payloadClient.TrySendPayload();
         }
 
-        private static MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data)
+        private static MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data, bool calculateMissingMetrics)
         {
             var transmissionMetrics = new MetricsTransmissionModel();
 
@@ -103,7 +104,10 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics
                 }
             }
 
-            transmissionMetrics.CalculateMissingData();
+            if (calculateMissingMetrics)
+            {
+                transmissionMetrics.CalculateMissingMetrics();
+            }
 
             return transmissionMetrics;
         }
