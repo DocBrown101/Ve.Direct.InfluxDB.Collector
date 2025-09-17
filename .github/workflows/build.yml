@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_WRAPPER_OUT_DIR: build_wrapper_output_directory
-      SONAR_SCANNER_PROJECT_KEY: DocBrown101_Ve.Direct.InfluxDB.Collector
 
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +35,11 @@ jobs:
       - name: SonarScanner for .NET - Begin
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        shell: powershell
         run: |
-          dotnet-sonarscanner begin `
-            /k:"${{ env.SONAR_SCANNER_PROJECT_KEY }}" `
-            /o:"docbrown101" `
-            /d:sonar.login="${{ secrets.SONAR_TOKEN }}" `
-            /d:sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}"
+          dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.token="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io"
+          dotnet build src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj
+          dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
