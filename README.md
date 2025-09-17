@@ -19,8 +19,8 @@ To run the Ve.Direct.InfluxDB.Collector, you will need:
 - [Grafana](https://hub.docker.com/r/grafana/grafana/tags?page=1&ordering=last_updated) and [InfluxDB](https://hub.docker.com/_/influxdb/tags?page=1&name=2) docker images
 - [The matching Grafana Dashboard](https://grafana.com/grafana/dashboards/14597)
 - [A Victron SmartSolar charge controller](https://www.victronenergy.com/solar-charge-controllers)
-- A Raspberry Pi or a 24/7 running PC with [.NET 8](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) and a serial port
-  - Important! As of version 3, [.NET 8](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) is required and mono is no longer supported!
+- A Raspberry Pi or a 24/7 running PC with [.NET 9](https://dotnet.microsoft.com/en-us/download/dotnet/9.0) and a serial port
+  - Important! As of version 3.3, [.NET 9](https://dotnet.microsoft.com/en-us/download/dotnet/9.0) is required!
 - A Ve.Direct cable for connecting the Victron device to the Raspberry Pi or PC
   - If there are only a few centimeters between the MPPT and the Raspberry Pi, no USB adapter from Victron is needed!
 
