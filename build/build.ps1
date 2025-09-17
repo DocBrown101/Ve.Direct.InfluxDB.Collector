@@ -11,7 +11,7 @@ dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.Infl
 	   -c Release `
 	   -v minimal `
 	   -o $BuildPathWinX64 `
-	   -f net8.0 `
+	   -f net9.0 `
 	   -p:PublishReadyToRun=false `
 	   -p:PublishSingleFile=true `
 	   -p:CopyOutputSymbolsToPublishDirectory=false `
@@ -24,7 +24,7 @@ dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.Infl
 	   -c Release `
 	   -v minimal `
 	   -o $BuildPathLinuxX64 `
-	   -f net8.0 `
+	   -f net9.0 `
 	   -p:PublishReadyToRun=false `
 	   -p:PublishSingleFile=true `
 	   -p:CopyOutputSymbolsToPublishDirectory=false `
@@ -37,7 +37,7 @@ dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.Infl
 	   -c Release `
 	   -v minimal `
 	   -o $BuildPathLinuxARM64 `
-	   -f net8.0 `
+	   -f net9.0 `
 	   -p:PublishReadyToRun=false `
 	   -p:PublishSingleFile=true `
 	   -p:CopyOutputSymbolsToPublishDirectory=false `

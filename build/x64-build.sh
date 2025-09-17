@@ -4,7 +4,7 @@ dotnet publish ../src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.
 	   --self-contained false \
 	   -c Release \
 	   -v minimal \
-	   -f net8.0 \
+	   -f net9.0 \
 	   -o ./output/linux-x64 \
 	   -p:PublishReadyToRun=false \
 	   -p:PublishSingleFile=true \

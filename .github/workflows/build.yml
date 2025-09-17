@@ -1,5 +1,5 @@
+name: SonarQube
 on:
-  # Trigger analysis when pushing to your main branches, and when creating a pull request.
   push:
     branches:
       - main
@@ -7,23 +7,54 @@ on:
       - develop
       - 'releases/**'
   pull_request:
-      types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened]
 
-name: Main Workflow
 jobs:
-  sonarqube:
+  build:
+    name: Build and analyze
     runs-on: ubuntu-latest
+    env:
+      BUILD_WRAPPER_OUT_DIR: build_wrapper_output_directory
+      SONAR_SCANNER_PROJECT_KEY: DocBrown101_Ve.Direct.InfluxDB.Collector
+
     steps:
-    - uses: actions/checkout@v4
-      with:
-        # Disabling shallow clones is recommended for improving the relevancy of reporting
-        fetch-depth: 0
-    - name: SonarQube Scan
-      uses: SonarSource/sonarqube-scan-action@v5.3.1
-      with:
-        projectBaseDir: src
-        args: >
-          -Dsonar.organization=docbrown101
-          -Dsonar.projectKey=DocBrown101_Ve.Direct.InfluxDB.Collector
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.x'
+
+      - name: Install SonarScanner for .NET
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: Install Build Wrapper
+        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@v5
+
+      - name: SonarScanner for .NET - Begin
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet-sonarscanner begin `
+            /k:"${{ env.SONAR_SCANNER_PROJECT_KEY }}" `
+            /o:"docbrown101" `
+            /d:sonar.login="${{ secrets.SONAR_TOKEN }}" `
+            /d:sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore .NET dependencies
+        run: dotnet restore src/Ve.Direct.InfluxDB.Collector.sln
+
+      - name: Build Solution with Build Wrapper
+        run: |
+          build-wrapper-linux-x86-64 --out-dir $env:BUILD_WRAPPER_OUT_DIR msbuild src/Ve.Direct.InfluxDB.Collector.sln /p:Configuration=Release
+        shell: pwsh
+
+      - name: SonarScanner for .NET - End
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
