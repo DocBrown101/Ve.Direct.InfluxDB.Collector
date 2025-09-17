@@ -13,8 +13,6 @@ jobs:
   build:
     name: Build and analyze
     runs-on: ubuntu-latest
-    env:
-      BUILD_WRAPPER_OUT_DIR: build_wrapper_output_directory
 
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +27,6 @@ jobs:
       - name: Install SonarScanner for .NET
         run: dotnet tool install --global dotnet-sonarscanner
 
-      - name: Install Build Wrapper
-        uses: SonarSource/sonarqube-scan-action/install-build-wrapper@v5
-
       - name: SonarScanner for .NET - Begin
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -39,20 +34,8 @@ jobs:
         run: |
           dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.token="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io"
           dotnet build src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj
-          dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Restore .NET dependencies
-        run: dotnet restore src/Ve.Direct.InfluxDB.Collector.sln
-
-      - name: Build Solution with Build Wrapper
-        run: |
-          build-wrapper-linux-x86-64 --out-dir $env:BUILD_WRAPPER_OUT_DIR msbuild src/Ve.Direct.InfluxDB.Collector.sln /p:Configuration=Release
-        shell: pwsh
 
       - name: SonarScanner for .NET - End
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+        run: dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
