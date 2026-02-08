@@ -17,7 +17,7 @@ namespace Ve.Direct.InfluxDB.Collector
             app.HelpOption();
             app.OnExecuteAsync(async cancellationToken =>
             {
-                ConsoleLogger.Init(config.DebugOutput, "3.3.0");
+                ConsoleLogger.Init(config.DebugOutput, "3.4.0");
                 ConsoleLogger.Debug($"Current output setting: {config.Output}");
 
                 try
