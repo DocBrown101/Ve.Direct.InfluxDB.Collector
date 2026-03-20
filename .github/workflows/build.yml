@@ -38,5 +38,5 @@ jobs:
         shell: bash
         run: |
           dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.token="$SONAR_TOKEN"
-          dotnet build src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj
+          dotnet build src/
           dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
