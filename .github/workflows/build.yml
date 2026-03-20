@@ -15,27 +15,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # 1. Checkout code repository
+      - name: Checkout code repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # required for SonarQube analysis
 
-      - name: Install .NET SDK
+      # 2. Setup .NET SDK
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.x'
+          dotnet-version: '10.0.x'
 
-      - name: Install SonarScanner for .NET
+      # 3. Setup SonarQube Analysis for .NET
+      - name: Setup SonarQube Analysis for .NET
         run: dotnet tool install --global dotnet-sonarscanner
 
-      - name: SonarScanner for .NET - Begin
+      # 4. Start SonarQube Analysis
+      - name: Start SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         shell: bash
         run: |
-          dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.host.url="https://sonarcloud.io"
+          dotnet-sonarscanner begin /k:"DocBrown101_Ve.Direct.InfluxDB.Collector" /o:"docbrown101" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.login="$SONAR_TOKEN"
           dotnet build src/Ve.Direct.InfluxDB.Collector/Ve.Direct.InfluxDB.Collector.csproj
-
-      - name: SonarScanner for .NET - End
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet-sonarscanner end
+          dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
