@@ -1,26 +1,16 @@
-﻿namespace Tests
+namespace Tests;
+
+using Ve.Direct.InfluxDB.Collector.ProtocolReader;
+
+public class VEDirectReaderTests : VEDirectReaderBaseTests<VEDirectReader>
 {
-    using System;
-    using Ve.Direct.InfluxDB.Collector;
-    using Xunit;
-
-    /// <summary>
-    /// TODO: add more tests
-    /// </summary>
-    public class VEDirectReaderTests
+    protected override VEDirectReader CreateReader()
     {
-        [Fact]
-        public void TestWaitHeaderState()
-        {
-            Assert.True(true); // TODO
+        return new("TESTPORT");
+    }
 
-            //var parser = new VEDirectReader();
-            
-            //var inputByte = Convert.ToByte('H');
-            //var result = parser.ProcessInputByte(inputByte);
-
-            //Assert.Null(result);
-            //Assert.Equal(ReadState.WAIT_HEADER, parser.State);
-        }
+    protected override bool ProcessByte(VEDirectReader reader, byte b)
+    {
+        return reader.ProcessInputByte(b);
     }
 }

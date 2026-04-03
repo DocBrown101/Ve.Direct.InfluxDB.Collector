@@ -1,4 +1,4 @@
-﻿namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
+namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
 {
     using System;
     using System.Collections.Generic;
@@ -9,100 +9,96 @@
     public class VEDirectReaderWithChecksum : IReader
     {
         private readonly string serialPortName;
+        private readonly Dictionary<string, string> serialData = new();
+        private readonly List<byte> inputBytes = new();
+        private string currentKey = "";
+        private string currentValue = "";
+        private bool isInHexMode;
 
         public VEDirectReaderWithChecksum(string serialPortName)
         {
             this.serialPortName = serialPortName ?? SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VE.Direct data!");
-
             ConsoleLogger.Info($"Using Port: {this.serialPortName}");
+        }
+
+        public bool ProcessInputByte(byte inputByte)
+        {
+            var inputByteAsChar = Convert.ToChar(inputByte);
+
+            // ':' outside of the Checksum field value triggers hex mode
+            if (inputByteAsChar == ':' && this.currentKey != "Checksum")
+            {
+                this.isInHexMode = true;
+                this.inputBytes.Clear();
+                return false;
+            }
+
+            if (this.isInHexMode)
+            {
+                if (inputByteAsChar == '\n')
+                    this.isInHexMode = false;
+                return false;
+            }
+
+            this.inputBytes.Add(inputByte);
+
+            if (inputByteAsChar == '\r' || inputByteAsChar == '\n')
+            {
+                if (!string.IsNullOrEmpty(this.currentKey) && !string.IsNullOrEmpty(this.currentValue))
+                {
+                    this.serialData[this.currentKey] = this.currentValue;
+                }
+                this.currentKey = "";
+                this.currentValue = "";
+            }
+            else if (inputByteAsChar == '\t')
+            {
+                this.currentKey = this.currentValue;
+                this.currentValue = "";
+            }
+            else if (this.currentKey == "Checksum")
+            {
+                var valid = IsChecksumValid(this.inputBytes);
+                this.inputBytes.Clear();
+                this.currentKey = "";
+                this.currentValue = "";
+                return valid;
+            }
+            else
+            {
+                this.currentValue += inputByteAsChar;
+            }
+
+            return false;
         }
 
         public void ReadSerialPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
         {
             ConsoleLogger.Info($"Collect Metrics ...");
 
-            var inputData = new Dictionary<string, string>();
-            var inputBytes = new List<byte>();
-            var currentKey = string.Empty;
-            var currentValue = string.Empty;
+            using var serialPort = new SerialPort(this.serialPortName, 19200);
+            serialPort.ReadTimeout = 5000;
+            serialPort.Open();
 
-            using (var serialPort = new SerialPort(this.serialPortName, 19200))
+            while (!ct.IsCancellationRequested)
             {
-                serialPort.ReadTimeout = 5000;
-                serialPort.Open();
+                var inputByte = (byte)serialPort.ReadByte();
+                if (inputByte == 0)
+                    continue;
 
-                while (!ct.IsCancellationRequested)
+                if (this.ProcessInputByte(inputByte))
                 {
-                    var inputByte = (byte)serialPort.ReadByte();
-                    if (inputByte == 0)
-                    {
-                        continue;
-                    }
-
-                    var inputByteAsChar = Convert.ToChar(inputByte);
-                    inputBytes.Add(inputByte);
-
-                    if (inputByteAsChar == '\n' || inputByteAsChar == '\r')
-                    {
-                        if (!string.IsNullOrEmpty(currentKey) && !string.IsNullOrEmpty(currentValue))
-                        {
-                            if (currentKey == "Checksum")
-                            {
-                                this.ProcessData(callbackFunction, inputData, inputBytes);
-                                inputData.Clear();
-                                inputBytes.Clear();
-                            }
-                            else
-                            {
-                                inputData[currentKey] = currentValue;
-                            }
-
-                            currentKey = string.Empty;
-                            currentValue = string.Empty;
-                        }
-                    }
-                    else if (inputByteAsChar == '\t')
-                    {
-                        currentKey = currentValue;
-                        currentValue = string.Empty;
-                    }
-                    else
-                    {
-                        currentValue += inputByteAsChar;
-                    }
+                    callbackFunction(this.serialData);
                 }
             }
         }
 
-        private void ProcessData(Action<Dictionary<string, string>> callbackFunction, Dictionary<string, string> serialData, List<byte> receivedBytes)
+        private static bool IsChecksumValid(List<byte> receivedBytes)
         {
-            if (this.IsChecksumValid(receivedBytes))
-            {
-                callbackFunction(serialData);
-            }
-            else
-            {
-                ConsoleLogger.Info("Warning: Checksum is invalid!");
-            }
-        }
-
-        private bool IsChecksumValid(List<byte> receivedBytes)
-        {
-            var checksum = 0;
-
-            for (var i = 0; i < receivedBytes.Count - 1; i++)
-            {
-                checksum += receivedBytes[i];
-            }
-
-            checksum %= 256;
-            var calculatedChecksum = (0x100 - checksum) % 0x100;
-            var receivedChecksum = receivedBytes[receivedBytes.Count - 1];
-
-            ConsoleLogger.Debug($"Calculated Checksum: {calculatedChecksum:X2}");
-            ConsoleLogger.Debug($"Received Checksum: {receivedChecksum:X2}");
-
-            return receivedChecksum == calculatedChecksum;
+            byte sum = 0;
+            foreach (var b in receivedBytes)
+                sum += b;
+            return sum == 0;
         }
     }
 }
