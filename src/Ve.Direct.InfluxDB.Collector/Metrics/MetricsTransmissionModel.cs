@@ -1,71 +1,68 @@
-﻿using System;
+﻿namespace Ve.Direct.InfluxDB.Collector.Metrics;
 
-namespace Ve.Direct.InfluxDB.Collector.Metrics
+internal sealed class MetricsTransmissionModel
 {
-    public class MetricsTransmissionModel
+    internal MetricsTransmissionModel(string serialNumber)
     {
-        public long BatteryMillivolt { get; set; }
+        ArgumentException.ThrowIfNullOrWhiteSpace(serialNumber);
+        this.SerialNumber = serialNumber;
+    }
 
-        public long BatteryMillicurrent { get; set; }
+    internal string SerialNumber { get; }
 
-        public long BatteryMilliwattsCalculated { get; private set; }
+    internal long BatteryVoltageMillivolts { get; set; }
 
-        public long PanelMillivolt { get; set; }
+    internal long BatteryCurrentMilliamps { get; set; }
 
-        public long PanelPower { get; set; }
+    internal long CalculatedBatteryPowerMilliwatts { get; private set; }
 
-        public long PanelMillicurrentCalculated { get; private set; }
+    internal long PanelVoltageMillivolts { get; set; }
 
-        public long LoadMillicurrent { get; set; }
+    internal long PanelPowerWatts { get; set; }
 
-        public long LoadMilliwattsCalculated { get; private set; }
+    internal long CalculatedPanelCurrentMilliamps { get; private set; }
 
-        public int LoadStatus { get; set; }
+    internal long LoadCurrentMilliamps { get; set; }
 
-        public long TodayYield { get; set; }
+    internal long CalculatedLoadPowerMilliwatts { get; private set; }
 
-        public long TodayPower { get; set; }
+    internal int LoadState { get; set; }
 
-        public int VICTRON_CS_Status { get; set; }
+    internal long TodayYieldWattHours { get; set; }
 
-        public int VICTRON_ERR_Status { get; set; }
+    internal long TodayMaximumPowerWatts { get; set; }
 
-        public int VICTRON_MPPT_Status { get; set; }
+    internal int ChargerState { get; set; }
 
-        public void CalculateMissingMetrics()
+    internal int ErrorCode { get; set; }
+
+    internal int TrackerState { get; set; }
+
+    internal void CalculateMissingMetrics()
+    {
+        if (this.LoadState > 0 && this.BatteryCurrentMilliamps < 0)
         {
-            if (this.LoadStatus > 0 && this.BatteryMillicurrent < 0)
-            {
-                this.LoadMillicurrent = Math.Max(this.LoadMillicurrent, Math.Abs(this.BatteryMillicurrent));
-            }
-
-            this.CalculateBatteryPower();
-            this.CalculatePanelCurrent();
-            this.CalculateLoadPower();
+            this.LoadCurrentMilliamps = Math.Max(
+                this.LoadCurrentMilliamps,
+                Math.Abs(this.BatteryCurrentMilliamps));
         }
 
-        private void CalculateBatteryPower()
+        if (this.BatteryVoltageMillivolts > 0 && this.BatteryCurrentMilliamps != 0)
         {
-            if (this.BatteryMillivolt > 0 && this.BatteryMillicurrent != 0)
-            {
-                this.BatteryMilliwattsCalculated = this.BatteryMillivolt * this.BatteryMillicurrent / 1000;
-            }
+            this.CalculatedBatteryPowerMilliwatts =
+                this.BatteryVoltageMillivolts * this.BatteryCurrentMilliamps / 1000;
         }
 
-        private void CalculatePanelCurrent()
+        if (this.PanelVoltageMillivolts > 0 && this.PanelPowerWatts > 0)
         {
-            if (this.PanelMillivolt > 0 && this.PanelPower > 0)
-            {
-                this.PanelMillicurrentCalculated = Convert.ToInt64(this.PanelPower / (decimal)this.PanelMillivolt * 1000 * 1000);
-            }
+            this.CalculatedPanelCurrentMilliamps = Convert.ToInt64(
+                this.PanelPowerWatts / (decimal)this.PanelVoltageMillivolts * 1000 * 1000);
         }
 
-        private void CalculateLoadPower()
+        if (this.LoadCurrentMilliamps > 0 && this.BatteryVoltageMillivolts > 0)
         {
-            if (this.LoadMillicurrent > 0 && this.BatteryMillivolt > 0)
-            {
-                this.LoadMilliwattsCalculated = this.BatteryMillivolt * this.LoadMillicurrent / 1000;
-            }
+            this.CalculatedLoadPowerMilliwatts =
+                this.BatteryVoltageMillivolts * this.LoadCurrentMilliamps / 1000;
         }
     }
 }

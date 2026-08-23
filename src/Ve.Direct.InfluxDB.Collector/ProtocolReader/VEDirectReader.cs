@@ -1,138 +1,142 @@
-﻿using System;
-using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO.Ports;
-using System.Linq;
-using System.Threading;
 
-namespace Ve.Direct.InfluxDB.Collector.ProtocolReader
+namespace Ve.Direct.InfluxDB.Collector.ProtocolReader;
+
+internal sealed class VEDirectReader(string serialPortName)
 {
-    public class VEDirectReader : IReader
+    private readonly Dictionary<string, string> currentFrame = [];
+    private ReadState state = ReadState.WaitHeader;
+    private byte checksumSum;
+    private string currentKey = string.Empty;
+    private string currentValue = string.Empty;
+
+    internal IReadOnlyDictionary<string, string> LastFrame { get; private set; }
+        = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
+
+    internal bool ProcessInputByte(byte inputByte)
     {
-        private readonly Dictionary<string, string> serialData;
-        private readonly string serialPortName;
-        private const char HEADER1 = '\r';
-        private const char HEADER2 = '\n';
-        private const char HEXMARKER = ':';
-        private const char DELIMITER = '\t';
+        var character = Convert.ToChar(inputByte);
 
-        private ReadState state = ReadState.WAIT_HEADER;
-        private byte bytes_sum = 0;
-        private string key = string.Empty;
-        private string value = string.Empty;
-
-        private enum ReadState
+        if (character == ':' && this.state != ReadState.InChecksum)
         {
-            HEX,
-            WAIT_HEADER,
-            IN_KEY,
-            IN_VALUE,
-            IN_CHECKSUM
-        }
-
-        public VEDirectReader(string serialPortName)
-        {
-            this.serialData = new Dictionary<string, string>();
-            this.serialPortName = serialPortName ?? SerialPort.GetPortNames().FirstOrDefault() ?? throw new NotSupportedException("No serial port found to read VE.Direct data!");
-
-            ConsoleLogger.Info($"Using Port: {this.serialPortName}");
-            ConsoleLogger.Info($"Collect Metrics ...");
-        }
-
-        public bool ProcessInputByte(byte inputByte)
-        {
-            var inputByteAsChar = Convert.ToChar(inputByte);
-
-            if (inputByteAsChar == HEXMARKER && this.state != ReadState.IN_CHECKSUM)
-            {
-                this.state = ReadState.HEX;
-            }
-
-            if (this.state != ReadState.HEX)
-            {
-                this.bytes_sum += inputByte;
-            }
-
-            switch (this.state)
-            {
-                case ReadState.WAIT_HEADER:
-                    if (inputByteAsChar == HEADER1) this.state = ReadState.WAIT_HEADER;
-                    else if (inputByteAsChar == HEADER2) this.state = ReadState.IN_KEY;
-                    break;
-
-                case ReadState.IN_KEY:
-                    if (inputByteAsChar == DELIMITER)
-                    {
-                        this.state = this.key == "Checksum"
-                            ? ReadState.IN_CHECKSUM
-                            : ReadState.IN_VALUE;
-                    }
-                    else
-                    {
-                        this.key += inputByteAsChar;
-                    }
-                    break;
-
-                case ReadState.IN_VALUE:
-                    if (inputByteAsChar == HEADER1)
-                    {
-                        this.state = ReadState.WAIT_HEADER;
-                        if (this.serialData.ContainsKey(this.key))
-                            this.serialData[this.key] = this.value;
-                        else
-                            this.serialData.Add(this.key, this.value);
-                        this.key = "";
-                        this.value = "";
-                    }
-                    else
-                    {
-                        this.value += inputByteAsChar;
-                    }
-                    break;
-
-                case ReadState.IN_CHECKSUM:
-                    this.key = "";
-                    this.value = "";
-                    this.state = ReadState.WAIT_HEADER;
-                    if (this.bytes_sum == 0)
-                    {
-                        this.bytes_sum = 0;
-                        return true;
-                    }
-                    ConsoleLogger.Info($"Warning: bytes_sum = {this.bytes_sum}");
-                    this.bytes_sum = 0;
-                    break;
-
-                case ReadState.HEX:
-                    this.bytes_sum = 0;
-                    if (inputByteAsChar == HEADER2) this.state = ReadState.WAIT_HEADER;
-                    break;
-
-                default:
-                    throw new ArgumentOutOfRangeException(string.Format("Unknown readstate {0}", this.state));
-            }
+            this.ResetFrame();
+            this.state = ReadState.Hex;
             return false;
         }
 
-        public void ReadSerialPortData(Action<Dictionary<string, string>> callbackFunction, CancellationToken ct)
+        if (this.state == ReadState.Hex)
         {
-            using var serialPort = new SerialPort(this.serialPortName, 19200);
-            serialPort.ReadTimeout = 5000;
-            serialPort.Open();
-
-            while (!ct.IsCancellationRequested)
+            if (character == '\n')
             {
-                var inputByte = (byte)serialPort.ReadByte();
-                if (inputByte == 0)
+                this.state = ReadState.WaitHeader;
+            }
+
+            return false;
+        }
+
+        this.checksumSum += inputByte;
+        switch (this.state)
+        {
+            case ReadState.WaitHeader:
+                if (character == '\n')
                 {
-                    continue;
+                    this.state = ReadState.InKey;
+                }
+                break;
+            case ReadState.InKey:
+                if (character == '\t')
+                {
+                    this.state = this.currentKey == "Checksum" ? ReadState.InChecksum : ReadState.InValue;
+                }
+                else
+                {
+                    this.currentKey += character;
+                }
+                break;
+            case ReadState.InValue:
+                if (character == '\r')
+                {
+                    this.currentFrame[this.currentKey] = this.currentValue;
+                    this.currentKey = string.Empty;
+                    this.currentValue = string.Empty;
+                    this.state = ReadState.WaitHeader;
+                }
+                else
+                {
+                    this.currentValue += character;
+                }
+                break;
+            case ReadState.InChecksum:
+                var isValid = this.checksumSum == 0;
+                if (isValid)
+                {
+                    this.LastFrame = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(this.currentFrame));
+                }
+                else
+                {
+                    ConsoleLogger.Info($"Ignoring VE.Direct frame with invalid checksum ({this.checksumSum}).");
                 }
 
-                var allBytesReceived = this.ProcessInputByte(inputByte);
-                if (allBytesReceived)
+                this.ResetFrame();
+                return isValid;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(this.state), this.state, "Unknown reader state.");
+        }
+
+        return false;
+    }
+
+    internal async Task ReadSerialPortDataAsync(
+        Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
+        CancellationToken cancellationToken)
+    {
+        using var serialPort = new SerialPort(serialPortName, 19200);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var cancellationRegistration = cancellationToken.Register(serialPort.Dispose);
+            serialPort.Open();
+            ConsoleLogger.Info($"Opened serial port {serialPortName}.");
+            var buffer = new byte[1];
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var bytesRead = await serialPort.BaseStream
+                    .ReadAsync(buffer.AsMemory(0, 1), cancellationToken)
+                    .ConfigureAwait(false);
+                if (bytesRead == 0)
                 {
-                    callbackFunction(this.serialData);
+                    throw new IOException($"Serial port {serialPortName} was disconnected.");
+                }
+
+                if (this.ProcessInputByte(buffer[0]))
+                {
+                    await processFrame(this.LastFrame, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            // Disposing SerialPort to unblock a read produces platform-specific exception types.
+        }
+    }
+
+    private void ResetFrame()
+    {
+        this.currentFrame.Clear();
+        this.checksumSum = 0;
+        this.currentKey = string.Empty;
+        this.currentValue = string.Empty;
+        this.state = ReadState.WaitHeader;
+    }
+
+    private enum ReadState
+    {
+        Hex,
+        WaitHeader,
+        InKey,
+        InValue,
+        InChecksum
     }
 }

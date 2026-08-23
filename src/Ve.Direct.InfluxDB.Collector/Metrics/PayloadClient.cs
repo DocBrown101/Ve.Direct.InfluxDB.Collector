@@ -1,95 +1,91 @@
-﻿using InfluxDB.Client;
+using InfluxDB.Client;
 using InfluxDB.Client.Api.Domain;
 using InfluxDB.Client.Writes;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
-namespace Ve.Direct.InfluxDB.Collector.Metrics
+namespace Ve.Direct.InfluxDB.Collector.Metrics;
+
+internal sealed class PayloadClient : IDisposable
 {
-    public class PayloadClient
+    private readonly string metricPrefix;
+    private readonly string hostName;
+    private readonly Func<List<PointData>, CancellationToken, Task> writePoints;
+    private readonly InfluxDBClient? influxDBClient;
+
+    internal PayloadClient(CollectorConfiguration configuration)
     {
-        private readonly CollectorConfiguration configuration;
-        private readonly InfluxDBClient influxDBClient;
-        private readonly List<PointData> pointDataList;
-        private DateTime lastTransmissionTime = DateTime.MinValue;
+        this.metricPrefix = configuration.InfluxMetricPrefix;
+        this.hostName = Environment.MachineName;
+        this.influxDBClient = new InfluxDBClient(
+            new InfluxDBClientOptions.Builder()
+                .Url(configuration.InfluxDbUrl)
+                .Bucket(configuration.InfluxDbBucket)
+                .Org(configuration.InfluxDbOrg)
+                .Build());
+        var writeApi = this.influxDBClient.GetWriteApiAsync();
+        this.writePoints = (points, cancellationToken) => writeApi.WritePointsAsync(
+            points,
+            configuration.InfluxDbBucket,
+            configuration.InfluxDbOrg,
+            cancellationToken);
+    }
 
-        public PayloadClient(CollectorConfiguration configuration)
-        {
-            this.configuration = configuration;
-            this.pointDataList = [];
+    internal PayloadClient(
+        string metricPrefix,
+        string hostName,
+        Func<List<PointData>, CancellationToken, Task> writePoints)
+    {
+        this.metricPrefix = metricPrefix;
+        this.hostName = hostName;
+        this.writePoints = writePoints;
+    }
 
-            var builder = new InfluxDBClientOptions.Builder();
-            builder.Url(configuration.InfluxDbUrl);
-            builder.Bucket(configuration.InfluxDbBucket);
-            builder.Org(configuration.InfluxDbOrg);
+    internal async Task WriteAsync(MetricsTransmissionModel metrics, CancellationToken cancellationToken)
+    {
+        var points = this.CreatePayload(metrics, DateTime.UtcNow);
+        await this.writePoints(points, cancellationToken).ConfigureAwait(false);
+        ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent for {metrics.SerialNumber}.");
+    }
 
-            this.influxDBClient = new InfluxDBClient(builder.Build());
-        }
+    internal List<PointData> CreatePayload(MetricsTransmissionModel metrics, DateTime timestamp)
+    {
+        return
+        [
+            this.AddTags(PointData.Measurement($"{this.metricPrefix}_battery"), metrics)
+                .Field("voltage", metrics.BatteryVoltageMillivolts)
+                .Field("current", metrics.BatteryCurrentMilliamps)
+                .Field("power", metrics.CalculatedBatteryPowerMilliwatts)
+                .Timestamp(timestamp, WritePrecision.Ms),
+            this.AddTags(PointData.Measurement($"{this.metricPrefix}_panel"), metrics)
+                .Field("voltage", metrics.PanelVoltageMillivolts)
+                .Field("current", metrics.CalculatedPanelCurrentMilliamps)
+                .Field("power", metrics.PanelPowerWatts)
+                .Timestamp(timestamp, WritePrecision.Ms),
+            this.AddTags(PointData.Measurement($"{this.metricPrefix}_load"), metrics)
+                .Field("current", metrics.LoadCurrentMilliamps)
+                .Field("power", metrics.CalculatedLoadPowerMilliwatts)
+                .Field("Status", metrics.LoadState)
+                .Timestamp(timestamp, WritePrecision.Ms),
+            this.AddTags(PointData.Measurement($"{this.metricPrefix}_today"), metrics)
+                .Field("yield", metrics.TodayYieldWattHours)
+                .Field("power", metrics.TodayMaximumPowerWatts)
+                .Timestamp(timestamp, WritePrecision.Ms),
+            this.AddTags(PointData.Measurement($"{this.metricPrefix}_VICTRON"), metrics)
+                .Field("CS_Status", metrics.ChargerState)
+                .Field("ERR_Status", metrics.ErrorCode)
+                .Field("MPPT_Status", metrics.TrackerState)
+                .Timestamp(timestamp, WritePrecision.Ms)
+        ];
+    }
 
-        public void AddPayload(MetricsTransmissionModel metrics)
-        {
-            var payloadDateTime = DateTime.UtcNow;
+    public void Dispose()
+    {
+        this.influxDBClient?.Dispose();
+    }
 
-            this.pointDataList.Add(PointData.Measurement($"{this.configuration.InfluxMetricPrefix}_battery")
-                    .Tag("host", Environment.MachineName)
-                    .Field("voltage", metrics.BatteryMillivolt)
-                    .Field("current", metrics.BatteryMillicurrent)
-                    .Field("power", metrics.BatteryMilliwattsCalculated)
-                    .Timestamp(payloadDateTime, WritePrecision.Ms));
-
-            this.pointDataList.Add(PointData.Measurement($"{this.configuration.InfluxMetricPrefix}_panel")
-                    .Tag("host", Environment.MachineName)
-                    .Field("voltage", metrics.PanelMillivolt)
-                    .Field("current", metrics.PanelMillicurrentCalculated)
-                    .Field("power", metrics.PanelPower)
-                    .Timestamp(payloadDateTime, WritePrecision.Ms));
-
-            this.pointDataList.Add(PointData.Measurement($"{this.configuration.InfluxMetricPrefix}_load")
-                    .Tag("host", Environment.MachineName)
-                    .Field("current", metrics.LoadMillicurrent)
-                    .Field("power", metrics.LoadMilliwattsCalculated)
-                    .Field("Status", metrics.LoadStatus)
-                    .Timestamp(payloadDateTime, WritePrecision.Ms));
-
-            this.pointDataList.Add(PointData.Measurement($"{this.configuration.InfluxMetricPrefix}_today")
-                    .Tag("host", Environment.MachineName)
-                    .Field("yield", metrics.TodayYield)
-                    .Field("power", metrics.TodayPower)
-                    .Timestamp(payloadDateTime, WritePrecision.Ms));
-
-            this.pointDataList.Add(PointData.Measurement($"{this.configuration.InfluxMetricPrefix}_VICTRON")
-                    .Tag("host", Environment.MachineName)
-                    .Field("CS_Status", metrics.VICTRON_CS_Status)
-                    .Field("ERR_Status", metrics.VICTRON_ERR_Status)
-                    .Field("MPPT_Status", metrics.VICTRON_MPPT_Status)
-                    .Timestamp(payloadDateTime, WritePrecision.Ms));
-        }
-
-        public async Task TrySendPayload()
-        {
-            var now = DateTime.Now;
-            var pastSeconds = (now - this.lastTransmissionTime).TotalSeconds;
-
-            if (pastSeconds >= this.configuration.Interval)
-            {
-                this.lastTransmissionTime = now;
-
-                try
-                {
-                    var writeApi = this.influxDBClient.GetWriteApiAsync();
-                    await writeApi.WritePointsAsync(this.pointDataList).ConfigureAwait(false);
-
-                    ConsoleLogger.Debug("InfluxDb write operation completed successfully!");
-                    ConsoleLogger.Debug($"{this.pointDataList.Count} data points were sent.");
-
-                    this.pointDataList.Clear();
-                }
-                catch (Exception e)
-                {
-                    ConsoleLogger.Error(e);
-                }
-            }
-        }
+    private PointData AddTags(PointData point, MetricsTransmissionModel metrics)
+    {
+        return point
+            .Tag("host", this.hostName)
+            .Tag("device", metrics.SerialNumber);
     }
 }

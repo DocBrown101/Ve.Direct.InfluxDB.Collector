@@ -1,125 +1,113 @@
-﻿using System.Collections.Generic;
+using System.Globalization;
 
-namespace Ve.Direct.InfluxDB.Collector.Metrics
+namespace Ve.Direct.InfluxDB.Collector.Metrics;
+
+internal sealed class MetricsCompositor : IDisposable
 {
-    /// <summary>
-    /// VICTRON_MPPT
-    /// '0': 'Off'
-    /// '1': 'Limited'
-    /// '2': 'Active'
-    /// 
-    /// VICTRON_CS
-    /// '0': 'Off'
-    /// '2': 'Fault'
-    /// '3': 'Bulk'
-    /// '4': 'Absorption'
-    /// '5': 'Float'
-    /// '7': 'Equalize (manual)'
-    /// '245': 'Starting-up'
-    /// '247': 'Auto equalize / Recondition'
-    /// '252': 'External control'
-    /// 
-    /// VICTRON_ERR
-    /// '0': 'No error'
-    /// '2': 'Battery voltage too high'
-    /// '17': 'Charger temperature too high'
-    /// '18': 'Charger over current'
-    /// '19': 'Charger current reversed'
-    /// '20': 'Bulk time limit exceeded'
-    /// '21': 'Current sensor issue'
-    /// '26': 'Terminals overheated'
-    /// '28': 'Converter issue',  # (dual converter models only)
-    /// '33': 'Input voltage too high (solar panel)'
-    /// '34': 'Input current too high (solar panel)'
-    /// '38': 'Input shutdown (excessive battery voltage)'
-    /// '39': 'Input shutdown (due to current flow during off mode)'
-    /// '65': 'Lost communication with one of devices'
-    /// '66': 'Synchronised charging device configuration issue'
-    /// '67': 'BMS connection lost'
-    /// '68': 'Network misconfigured'
-    /// '116': 'Factory calibration data lost'
-    /// '117': 'Invalid/incompatible firmware'
-    /// '119': 'User settings invalid'
-    /// </summary>
-    public class MetricsCompositor(CollectorConfiguration configuration)
+    private readonly bool calculateMissingMetrics;
+    private readonly PayloadClient payloadClient;
+
+    internal MetricsCompositor(CollectorConfiguration configuration)
     {
-        private readonly CollectorConfiguration collectorConfiguration = configuration;
-        private readonly PayloadClient payloadClient = new(configuration);
+        this.calculateMissingMetrics = configuration.CalculateMissingMetrics;
+        this.payloadClient = new PayloadClient(configuration);
+    }
 
-        public void SendMetricsCallback(Dictionary<string, string> rawData)
+    internal async Task SendMetricsAsync(
+        string portName,
+        IReadOnlyDictionary<string, string> frame,
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            ConsoleLogger.Debug("Just received new raw data!");
+            var metrics = ComposeMetrics(frame, this.calculateMissingMetrics);
+            ConsoleLogger.Debug($"Received metrics for device {metrics.SerialNumber} on {portName}.");
+            await this.payloadClient.WriteAsync(metrics, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArgumentException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} were ignored: {exception.Message}");
+        }
+        catch (FormatException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} contain an invalid number: {exception.Message}");
+        }
+        catch (OverflowException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} contain a number outside the supported range: {exception.Message}");
+        }
+    }
 
-            this.payloadClient.AddPayload(ConvertToMetricsTransmissionModel(rawData, this.collectorConfiguration.CalculateMissingMetrics));
-            _ = this.payloadClient.TrySendPayload();
+    public void Dispose()
+    {
+        this.payloadClient.Dispose();
+    }
+
+    internal static MetricsTransmissionModel ComposeMetrics(
+        IReadOnlyDictionary<string, string> frame,
+        bool calculateMissingMetrics)
+    {
+        if (!frame.TryGetValue("SER#", out var serialNumber) || string.IsNullOrWhiteSpace(serialNumber))
+        {
+            throw new ArgumentException("A VE.Direct frame must contain SER# before metrics can be composed.", nameof(frame));
         }
 
-        private static MetricsTransmissionModel ConvertToMetricsTransmissionModel(Dictionary<string, string> data, bool calculateMissingMetrics)
+        var metrics = new MetricsTransmissionModel(serialNumber.Trim());
+        foreach (var (key, value) in frame)
         {
-            var transmissionMetrics = new MetricsTransmissionModel();
-
-            foreach (var kvp in data)
+            switch (key)
             {
-                switch (kvp.Key)
-                {
-                    case "V": // Battery voltage (mV)
-                        transmissionMetrics.BatteryMillivolt = ToLong(kvp.Value);
-                        break;
-                    case "I": // Battery current (mA)
-                        transmissionMetrics.BatteryMillicurrent = ToLong(kvp.Value);
-                        break;
-                    case "VPV": // Panel voltage (mV)
-                        transmissionMetrics.PanelMillivolt = ToLong(kvp.Value);
-                        break;
-                    case "PPV": // Panel Power (W)
-                        transmissionMetrics.PanelPower = ToLong(kvp.Value);
-                        break;
-                    case "IL": // Load Current (mA)
-                        transmissionMetrics.LoadMillicurrent = ToLong(kvp.Value);
-                        break;
-                    case "H20": // Yield today (0.01 Kwh)
-                        transmissionMetrics.TodayYield = ToLong(kvp.Value) * 10;
-                        break;
-                    case "H21": // Maximum power today (W)
-                        transmissionMetrics.TodayPower = ToLong(kvp.Value);
-                        break;
-                    case "CS": // State of operation
-                        transmissionMetrics.VICTRON_CS_Status = ToInt(kvp.Value);
-                        break;
-                    case "ERR": // Error state
-                        transmissionMetrics.VICTRON_ERR_Status = ToInt(kvp.Value);
-                        break;
-                    case "MPPT": // Tracker operation mode
-                        transmissionMetrics.VICTRON_MPPT_Status = ToInt(kvp.Value);
-                        break;
-                    case "LOAD": // Load output State (ON/OFF)
-                        transmissionMetrics.LoadStatus = kvp.Value == "ON" ? 1 : 0;
-                        break;
-                    case "H19": // Yield total, kWh
-                    case "H22": // Yield yesterday, kWh
-                    case "H23": // Maximum power yesterday, W
-                    case "HSDS": // Day sequence number, 0 to 365
-                    default:
-                        break;
-                }
+                case "V": // Battery voltage (mV)
+                    metrics.BatteryVoltageMillivolts = ParseLong(value);
+                    break;
+                case "I": // Battery current (mA)
+                    metrics.BatteryCurrentMilliamps = ParseLong(value);
+                    break;
+                case "VPV": // Panel voltage (mV)
+                    metrics.PanelVoltageMillivolts = ParseLong(value);
+                    break;
+                case "PPV": // Panel power (W)
+                    metrics.PanelPowerWatts = ParseLong(value);
+                    break;
+                case "IL": // Load current (mA)
+                    metrics.LoadCurrentMilliamps = ParseLong(value);
+                    break;
+                case "H20": // Yield today (0.01 kWh)
+                    metrics.TodayYieldWattHours = ParseLong(value) * 10;
+                    break;
+                case "H21": // Maximum power today (W)
+                    metrics.TodayMaximumPowerWatts = ParseLong(value);
+                    break;
+                case "CS": // State of operation
+                    metrics.ChargerState = ParseInt(value);
+                    break;
+                case "ERR": // Error state
+                    metrics.ErrorCode = ParseInt(value);
+                    break;
+                case "MPPT": // Tracker operation mode
+                    metrics.TrackerState = ParseInt(value);
+                    break;
+                case "LOAD": // Load output State (ON/OFF)
+                    metrics.LoadState = value == "ON" ? 1 : 0;
+                    break;
             }
-
-            if (calculateMissingMetrics)
-            {
-                transmissionMetrics.CalculateMissingMetrics();
-            }
-
-            return transmissionMetrics;
         }
 
-        private static long ToLong(string value)
+        if (calculateMissingMetrics)
         {
-            return value != null ? long.Parse(value) : 0;
+            metrics.CalculateMissingMetrics();
         }
 
-        private static int ToInt(string value)
-        {
-            return value != null ? int.Parse(value) : 0;
-        }
+        return metrics;
+    }
+
+    private static long ParseLong(string value)
+    {
+        return long.Parse(value, CultureInfo.InvariantCulture);
+    }
+
+    private static int ParseInt(string value)
+    {
+        return int.Parse(value, CultureInfo.InvariantCulture);
     }
 }
