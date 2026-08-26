@@ -30,11 +30,6 @@ internal sealed class ConsoleFrameOutput(TextWriter output) : IFrameOutput
         return Task.CompletedTask;
     }
 
-    public Task CompleteAsync(CancellationToken cancellationToken)
-    {
-        return Task.CompletedTask;
-    }
-
     public void Dispose()
     {
     }

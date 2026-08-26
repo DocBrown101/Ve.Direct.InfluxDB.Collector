@@ -38,11 +38,6 @@ internal sealed class InfluxFrameOutput : IFrameOutput
         }
     }
 
-    public Task CompleteAsync(CancellationToken cancellationToken)
-    {
-        return this.payloadClient.CompleteAndFlushAsync(cancellationToken);
-    }
-
     public void Dispose()
     {
         this.payloadClient.Dispose();

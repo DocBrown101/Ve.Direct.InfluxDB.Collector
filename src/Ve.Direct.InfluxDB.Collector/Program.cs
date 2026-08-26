@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using McMaster.Extensions.CommandLineUtils;
+using Ve.Direct.InfluxDB.Collector.SerialPorts;
 
 namespace Ve.Direct.InfluxDB.Collector;
 
@@ -42,8 +43,8 @@ public static class Program
             var scanInterval = TimeSpan.FromSeconds(configuration.ScanInterval);
             ConsoleLogger.Info("Starting VE.Direct collection with automatic port discovery.");
             using var frameOutput = CreateFrameOutput(configuration, shutdown.Token);
-            var collector = new VEDirectCollector(frameOutput, scanInterval);
-            await collector.RunMainLoopAsync(shutdown.Token).ConfigureAwait(false);
+            var portMonitor = new VEDirectPortMonitor(frameOutput.WriteFrameAsync, scanInterval);
+            await portMonitor.MonitorPortsAsync(shutdown.Token).ConfigureAwait(false);
 
             return 0;
         }

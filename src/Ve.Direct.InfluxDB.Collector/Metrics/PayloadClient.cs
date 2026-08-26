@@ -15,9 +15,10 @@ internal sealed class PayloadClient : IDisposable
     private readonly InfluxDBClient? influxDBClient;
     private readonly int eventsPerWrite;
     private readonly int maxBufferedPoints;
-    private readonly CancellationToken writerCancellationToken;
+    private readonly CancellationTokenSource writerCancellation;
     private readonly Channel<BufferedPayload> payloadChannel;
-    private readonly Task<Queue<BufferedPayload>> workerTask;
+    private readonly Task workerTask;
+    private bool isDisposed;
 
     internal PayloadClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
     {
@@ -25,7 +26,7 @@ internal sealed class PayloadClient : IDisposable
         this.hostName = Environment.MachineName;
         this.eventsPerWrite = configuration.InfluxEventsPerWrite;
         this.maxBufferedPoints = configuration.InfluxMaxBufferedPoints;
-        this.writerCancellationToken = writerCancellationToken;
+        this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
         this.influxDBClient = new InfluxDBClient(
             new InfluxDBClientOptions.Builder()
                 .Url(configuration.InfluxDbUrl)
@@ -58,7 +59,7 @@ internal sealed class PayloadClient : IDisposable
         this.writePoints = writePoints;
         this.eventsPerWrite = eventsPerWrite;
         this.maxBufferedPoints = maxBufferedPoints;
-        this.writerCancellationToken = writerCancellationToken;
+        this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
         this.payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
         this.workerTask = this.ProcessPayloadsAsync();
     }
@@ -72,23 +73,23 @@ internal sealed class PayloadClient : IDisposable
         return this.payloadChannel.Writer.WriteAsync(payload, cancellationToken).AsTask();
     }
 
-    internal async Task CompleteAndFlushAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        this.payloadChannel.Writer.Complete();
-        var pendingPayloads = await this.workerTask.ConfigureAwait(false);
-        await this.WritePendingPayloadsAsync(pendingPayloads, cancellationToken).ConfigureAwait(false);
-    }
-
     public void Dispose()
     {
+        if (this.isDisposed)
+        {
+            return;
+        }
+
+        this.isDisposed = true;
         this.payloadChannel.Writer.TryComplete();
+        this.writerCancellation.Cancel();
         try
         {
             this.workerTask.GetAwaiter().GetResult();
         }
         finally
         {
+            this.writerCancellation.Dispose();
             this.influxDBClient?.Dispose();
         }
     }
@@ -143,7 +144,7 @@ internal sealed class PayloadClient : IDisposable
         });
     }
 
-    private async Task<Queue<BufferedPayload>> ProcessPayloadsAsync()
+    private async Task ProcessPayloadsAsync()
     {
         var deviceEventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var pendingPayloads = new Queue<BufferedPayload>();
@@ -166,21 +167,19 @@ internal sealed class PayloadClient : IDisposable
             deviceEventCounts.Clear();
             try
             {
-                await this.WritePendingPayloadsAsync(pendingPayloads, this.writerCancellationToken)
+                await this.WritePendingPayloadsAsync(pendingPayloads, this.writerCancellation.Token)
                     .ConfigureAwait(false);
                 bufferedPointCount = 0;
             }
-            catch (OperationCanceledException) when (this.writerCancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
             {
-                // Terminal completion retries retained payloads with its independent timeout.
+                return;
             }
             catch (Exception exception)
             {
                 ConsoleLogger.Error(exception);
             }
         }
-
-        return pendingPayloads;
     }
 
     private async Task WritePendingPayloadsAsync(
@@ -193,7 +192,7 @@ internal sealed class PayloadClient : IDisposable
         }
 
         var points = pendingPayloads.SelectMany(payload => payload.Points).ToList();
-        await this.writePoints(points, cancellationToken).ConfigureAwait(false);
+        await this.writePoints(points, cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
         pendingPayloads.Clear();
         ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
     }

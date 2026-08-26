@@ -1,7 +1,6 @@
 namespace Tests;
 
 using System.Collections.Concurrent;
-using System.Threading.Channels;
 using InfluxDB.Client.Writes;
 using Ve.Direct.InfluxDB.Collector.Metrics;
 using Xunit;
@@ -133,7 +132,6 @@ public sealed class MetricsPipelineTests
         }
 
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
-        await client.CompleteAndFlushAsync(timeout.Token);
         Assert.Equal(2, calls.Count);
     }
 
@@ -143,6 +141,7 @@ public sealed class MetricsPipelineTests
         var calls = new ConcurrentQueue<string[]>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activeWriters = 0;
         var maximumActiveWriters = 0;
         using var client = new PayloadClient(
@@ -165,6 +164,11 @@ public sealed class MetricsPipelineTests
                 {
                     Interlocked.Decrement(ref activeWriters);
                 }
+
+                if (calls.Count == 2)
+                {
+                    secondWriteCompleted.TrySetResult();
+                }
             });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
@@ -183,7 +187,7 @@ public sealed class MetricsPipelineTests
 
         releaseFirstWriter.SetResult();
         await firstWrite;
-        await client.CompleteAndFlushAsync(timeout.Token);
+        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
 
         Assert.Equal(2, calls.Count);
         Assert.Equal(1, maximumActiveWriters);
@@ -194,6 +198,7 @@ public sealed class MetricsPipelineTests
     public async Task WriteAsync_FailedBatch_IsRetriedWithNextBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
+        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempt = 0;
         using var client = new PayloadClient(
             "ve_direct",
@@ -206,8 +211,10 @@ public sealed class MetricsPipelineTests
                     throw new InvalidOperationException("InfluxDB unavailable");
                 }
 
+                secondWriteCompleted.TrySetResult();
                 return Task.CompletedTask;
             });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         for (var index = 0; index < 9; index++)
         {
@@ -221,7 +228,7 @@ public sealed class MetricsPipelineTests
             await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
-        await client.CompleteAndFlushAsync(CancellationToken.None);
+        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
         Assert.Equal(2, calls.Count);
         Assert.Equal(50, calls.ElementAt(0).Length);
         Assert.Equal(100, calls.ElementAt(1).Length);
@@ -233,6 +240,7 @@ public sealed class MetricsPipelineTests
         var calls = new ConcurrentQueue<int>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempt = 0;
         using var client = new PayloadClient(
             "ve_direct",
@@ -246,6 +254,8 @@ public sealed class MetricsPipelineTests
                     await failFirstWriter.Task.WaitAsync(cancellationToken);
                     throw new InvalidOperationException("InfluxDB unavailable");
                 }
+
+                secondWriteCompleted.TrySetResult();
             });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
@@ -264,182 +274,70 @@ public sealed class MetricsPipelineTests
 
         failFirstWriter.SetResult();
         await firstWrite;
-        await client.CompleteAndFlushAsync(timeout.Token);
+        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
 
         Assert.Equal([50, 100], calls.ToArray());
     }
 
     [Fact]
-    public async Task CompleteAndFlushAsync_DuringTriggeredWrite_IsSerializedAndIncludesNewPoints()
-    {
-        var calls = new ConcurrentQueue<int>();
-        var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var activeWriters = 0;
-        var maximumActiveWriters = 0;
-        using var client = new PayloadClient(
-            "ve_direct",
-            "collector",
-            async (points, cancellationToken) =>
-            {
-                calls.Enqueue(points.Count);
-                var active = Interlocked.Increment(ref activeWriters);
-                InterlockedExtensions.Max(ref maximumActiveWriters, active);
-                try
-                {
-                    if (calls.Count == 1)
-                    {
-                        firstWriterEntered.SetResult();
-                        await releaseFirstWriter.Task.WaitAsync(cancellationToken);
-                    }
-                }
-                finally
-                {
-                    Interlocked.Decrement(ref activeWriters);
-                }
-            });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        for (var index = 0; index < 9; index++)
-        {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
-        }
-
-        var triggeredWrite = client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
-        await firstWriterEntered.Task.WaitAsync(timeout.Token);
-        await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
-        await triggeredWrite;
-        var completion = client.CompleteAndFlushAsync(timeout.Token);
-
-        releaseFirstWriter.SetResult();
-        await completion;
-
-        Assert.Equal([50, 5], calls.ToArray());
-        Assert.Equal(1, maximumActiveWriters);
-    }
-
-    [Fact]
-    public async Task CompleteAndFlushAsync_CanceledSharedWriter_RetriesWithCompletionToken()
-    {
-        var calls = new ConcurrentQueue<int>();
-        var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var attempt = 0;
-        using var writerCancellation = new CancellationTokenSource();
-        using var client = new PayloadClient(
-            "ve_direct",
-            "collector",
-            async (points, cancellationToken) =>
-            {
-                calls.Enqueue(points.Count);
-                if (Interlocked.Increment(ref attempt) == 1)
-                {
-                    firstWriterEntered.SetResult();
-                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                }
-            },
-            writerCancellationToken: writerCancellation.Token);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        for (var index = 0; index < 9; index++)
-        {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
-        }
-
-        var canceledWrite = client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
-        await firstWriterEntered.Task.WaitAsync(timeout.Token);
-        await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
-        writerCancellation.Cancel();
-
-        await canceledWrite;
-        await client.CompleteAndFlushAsync(timeout.Token);
-
-        Assert.Equal([50, 55], calls.ToArray());
-    }
-
-    [Fact]
-    public async Task CompleteAndFlushAsync_BufferLimit_DiscardsOldestCompleteFrames()
+    public async Task WriteAsync_BufferLimit_DiscardsOldestCompleteFrames()
     {
         var calls = new ConcurrentQueue<string[]>();
+        var writeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = new PayloadClient(
             "ve_direct",
             "collector",
             (points, _) =>
             {
                 calls.Enqueue(points.Select(ToLineProtocol).ToArray());
+                writeCompleted.TrySetResult();
                 return Task.CompletedTask;
             },
-            eventsPerWrite: 100,
+            eventsPerWrite: 2,
             maxBufferedPoints: 10);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
         await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         await client.WriteAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
-        await client.CompleteAndFlushAsync(CancellationToken.None);
+        await client.WriteAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
+        await writeCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
         Assert.Equal(10, payload.Length);
         Assert.DoesNotContain(payload, line => line.Contains("device=HQ111", StringComparison.Ordinal));
-        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ222", StringComparison.Ordinal)));
-        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ333", StringComparison.Ordinal)));
+        Assert.DoesNotContain(payload, line => line.Contains("device=HQ222", StringComparison.Ordinal));
+        Assert.Equal(10, payload.Count(line => line.Contains("device=HQ333", StringComparison.Ordinal)));
     }
 
     [Fact]
-    public async Task CompleteAndFlushAsync_FailedWrite_PropagatesError()
+    public async Task Dispose_BlockedWriter_DoesNotWaitForUnderlyingWrite()
     {
-        var calls = new ConcurrentQueue<int>();
-        var attempt = 0;
-        using var client = new PayloadClient(
+        var writerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new PayloadClient(
             "ve_direct",
             "collector",
-            (points, _) =>
+            async (_, _) =>
             {
-                calls.Enqueue(points.Count);
-                if (Interlocked.Increment(ref attempt) == 1)
-                {
-                    throw new InvalidOperationException("InfluxDB unavailable");
-                }
+                writerEntered.TrySetResult();
+                await releaseWriter.Task;
+            },
+            eventsPerWrite: 1);
+        using var testTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-                return Task.CompletedTask;
-            });
+        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), testTimeout.Token);
+        await writerEntered.Task.WaitAsync(testTimeout.Token);
 
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            client.CompleteAndFlushAsync(CancellationToken.None));
-
-        Assert.Equal([5], calls.ToArray());
-    }
-
-    [Fact]
-    public async Task CompleteAndFlushAsync_LessThanThreshold_WritesRemainingPointsOnce()
-    {
-        var calls = new ConcurrentQueue<int>();
-        using var client = new PayloadClient(
-            "ve_direct",
-            "collector",
-            (points, _) =>
-            {
-                calls.Enqueue(points.Count);
-                return Task.CompletedTask;
-            });
-
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-        await client.CompleteAndFlushAsync(CancellationToken.None);
-
-        Assert.Equal([5], calls.ToArray());
-    }
-
-    [Fact]
-    public async Task CompleteAndFlushAsync_RejectsFurtherCompletionsAndWrites()
-    {
-        using var client = new PayloadClient("ve_direct", "collector", (_, _) => Task.CompletedTask);
-
-        await client.CompleteAndFlushAsync(CancellationToken.None);
-
-        await Assert.ThrowsAsync<ChannelClosedException>(() =>
-            client.CompleteAndFlushAsync(CancellationToken.None));
-        await Assert.ThrowsAsync<ChannelClosedException>(() =>
-            client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None));
+        var disposeTask = Task.Run(client.Dispose, TestContext.Current.CancellationToken);
+        try
+        {
+            await disposeTask.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            releaseWriter.TrySetResult();
+        }
     }
 
     private static string ToLineProtocol(PointData point)

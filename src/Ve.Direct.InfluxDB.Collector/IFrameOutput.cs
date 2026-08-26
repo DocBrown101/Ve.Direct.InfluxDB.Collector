@@ -6,6 +6,4 @@ internal interface IFrameOutput : IDisposable
         string portName,
         IReadOnlyDictionary<string, string> frame,
         CancellationToken cancellationToken);
-
-    Task CompleteAsync(CancellationToken cancellationToken);
 }

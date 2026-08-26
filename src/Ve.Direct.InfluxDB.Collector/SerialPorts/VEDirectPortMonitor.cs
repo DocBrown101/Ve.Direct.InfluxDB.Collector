@@ -187,7 +187,7 @@ internal sealed class VEDirectPortMonitor
         }
         catch (Exception exception)
         {
-            ConsoleLogger.Error($"Processing metrics from {portName} failed: {exception.Message}");
+            ConsoleLogger.Error($"Processing a frame from {portName} failed: {exception.Message}");
         }
     }
 
