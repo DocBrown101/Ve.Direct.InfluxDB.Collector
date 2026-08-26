@@ -46,9 +46,12 @@ public static class Program
 
             if (configuration.Output == CollectorConfiguration.OutputDefinition.Influx)
             {
-                using var metrics = new MetricsCompositor(configuration);
+                using var metrics = new MetricsCompositor(configuration, shutdown.Token);
                 var manager = new VEDirectDeviceManager(metrics.SendMetricsAsync, scanInterval);
                 await manager.RunAsync(shutdown.Token).ConfigureAwait(false);
+
+                using var finalFlush = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await metrics.FlushAsync(finalFlush.Token).ConfigureAwait(false);
             }
             else
             {

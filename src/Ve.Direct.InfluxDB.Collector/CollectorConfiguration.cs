@@ -12,6 +12,8 @@ internal sealed class CollectorConfiguration
     private readonly CommandOption<string> influxDbBucket;
     private readonly CommandOption<string> influxDbOrg;
     private readonly CommandOption<string> influxMetricPrefix;
+    private readonly CommandOption<int> influxEventsPerWrite;
+    private readonly CommandOption<int> influxMaxBufferedPoints;
 
     internal CollectorConfiguration(CommandLineApplication app)
     {
@@ -44,6 +46,16 @@ internal sealed class CollectorConfiguration
             "--influxMetricPrefix",
             "Prefix for all metrics",
             CommandOptionType.SingleValue);
+        this.influxEventsPerWrite = app.Option<int>(
+                "--influxEventsPerWrite",
+                "Number of frames from one device that triggers a shared InfluxDB write",
+                CommandOptionType.SingleValue)
+            .Accepts(value => value.Range(1, 3600));
+        this.influxMaxBufferedPoints = app.Option<int>(
+                "--influxMaxBufferedPoints",
+                "Maximum number of pending InfluxDB points",
+                CommandOptionType.SingleValue)
+            .Accepts(value => value.Range(5, 1_000_000));
 
         this.SetDefaultValues();
     }
@@ -64,6 +76,10 @@ internal sealed class CollectorConfiguration
 
     internal string InfluxMetricPrefix => this.influxMetricPrefix.ParsedValue;
 
+    internal int InfluxEventsPerWrite => this.influxEventsPerWrite.ParsedValue;
+
+    internal int InfluxMaxBufferedPoints => this.influxMaxBufferedPoints.ParsedValue;
+
     internal enum OutputDefinition
     {
         Console,
@@ -83,5 +99,7 @@ internal sealed class CollectorConfiguration
         this.influxDbBucket.DefaultValue = "solar";
         this.influxDbOrg.DefaultValue = "home";
         this.influxMetricPrefix.DefaultValue = "ve_direct";
+        this.influxEventsPerWrite.DefaultValue = 10;
+        this.influxMaxBufferedPoints.DefaultValue = 10_000;
     }
 }

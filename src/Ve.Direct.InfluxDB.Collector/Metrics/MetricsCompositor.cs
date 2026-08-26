@@ -7,10 +7,10 @@ internal sealed class MetricsCompositor : IDisposable
     private readonly bool calculateMissingMetrics;
     private readonly PayloadClient payloadClient;
 
-    internal MetricsCompositor(CollectorConfiguration configuration)
+    internal MetricsCompositor(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
     {
         this.calculateMissingMetrics = configuration.CalculateMissingMetrics;
-        this.payloadClient = new PayloadClient(configuration);
+        this.payloadClient = new PayloadClient(configuration, writerCancellationToken);
     }
 
     internal async Task SendMetricsAsync(
@@ -41,6 +41,11 @@ internal sealed class MetricsCompositor : IDisposable
     public void Dispose()
     {
         this.payloadClient.Dispose();
+    }
+
+    internal Task FlushAsync(CancellationToken cancellationToken)
+    {
+        return this.payloadClient.FlushAsync(cancellationToken);
     }
 
     internal static MetricsTransmissionModel ComposeMetrics(
