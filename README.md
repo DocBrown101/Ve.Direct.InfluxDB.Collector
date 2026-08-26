@@ -47,11 +47,13 @@ VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning
 
 InfluxDB writes are triggered by incoming frames rather than a timer. The default threshold is ten frames from one device. As soon as the first device reaches that threshold, all points currently buffered for every device are written in one request and all device counters start a new round.
 
-Change the threshold with `--influxEventsPerWrite`. The shared buffer holds at most 10,000 pending points by default; `--influxMaxBufferedPoints` changes that limit. If the limit is reached, the oldest complete frames are discarded. A failed write is returned to the front of the buffer and retried with a later batch. Remaining points are flushed during graceful shutdown.
+Change the threshold with `--influxEventsPerWrite`. The shared buffer holds at most 10,000 pending points by default; `--influxMaxBufferedPoints` changes that limit. If the limit is reached, the oldest complete frames are discarded. A failed write is returned to the front of the buffer and retried with a later batch. Remaining points are written when the Influx output completes during graceful shutdown.
 
 ## Auto-Discovery
 
 The collector polls `SerialPort.GetPortNames()` and starts an independent reader and parser for each port. The default scan interval is five seconds and can be changed with `--scan-interval`.
+
+The collector main loop owns this port monitor and the selected frame output. Console output writes every accepted frame immediately. Influx output converts frames to metrics and passes them to its bounded background writer. During shutdown, the main loop first stops all port readers and then completes the output. Console completion has no pending work; Influx completion writes the remaining buffered points with a separate ten-second timeout.
 
 Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-discover` options have been removed. The former time-based `-i`/`--interval` batch option has been replaced by event-based shared batching.
 
@@ -61,7 +63,7 @@ Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-disco
 - New ports are opened during the next scan.
 - Removed ports are stopped without affecting other readers.
 - Open and read failures are isolated to the affected port and retried.
-- Shutdown stops all readers, flushes pending points, and disposes the database client.
+- Shutdown stops all readers, completes the selected output, and disposes its resources.
 
 Frames without a non-empty `SER#` are discarded. A warning is logged once per affected port until a valid serial number is received.
 

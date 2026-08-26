@@ -17,7 +17,7 @@ internal sealed class PayloadClient : IDisposable
     private readonly int maxBufferedPoints;
     private readonly CancellationToken writerCancellationToken;
     private readonly Channel<BufferedPayload> payloadChannel;
-    private readonly Task workerTask;
+    private readonly Task<Queue<BufferedPayload>> workerTask;
 
     internal PayloadClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
     {
@@ -72,14 +72,25 @@ internal sealed class PayloadClient : IDisposable
         return this.payloadChannel.Writer.WriteAsync(payload, cancellationToken).AsTask();
     }
 
-    internal async Task FlushAsync(CancellationToken cancellationToken)
+    internal async Task CompleteAndFlushAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await this.payloadChannel.Writer
-            .WriteAsync(new BufferedPayload(completion, cancellationToken), cancellationToken)
-            .ConfigureAwait(false);
-        await completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        this.payloadChannel.Writer.Complete();
+        var pendingPayloads = await this.workerTask.ConfigureAwait(false);
+        await this.WritePendingPayloadsAsync(pendingPayloads, cancellationToken).ConfigureAwait(false);
+    }
+
+    public void Dispose()
+    {
+        this.payloadChannel.Writer.TryComplete();
+        try
+        {
+            this.workerTask.GetAwaiter().GetResult();
+        }
+        finally
+        {
+            this.influxDBClient?.Dispose();
+        }
     }
 
     internal List<PointData> CreatePayload(MetricsTransmissionModel metrics, DateTime timestamp)
@@ -113,19 +124,6 @@ internal sealed class PayloadClient : IDisposable
         ];
     }
 
-    public void Dispose()
-    {
-        this.payloadChannel.Writer.TryComplete();
-        try
-        {
-            this.workerTask.GetAwaiter().GetResult();
-        }
-        finally
-        {
-            this.influxDBClient?.Dispose();
-        }
-    }
-
     private PointData AddTags(PointData point, MetricsTransmissionModel metrics)
     {
         return point
@@ -145,7 +143,7 @@ internal sealed class PayloadClient : IDisposable
         });
     }
 
-    private async Task ProcessPayloadsAsync()
+    private async Task<Queue<BufferedPayload>> ProcessPayloadsAsync()
     {
         var deviceEventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var pendingPayloads = new Queue<BufferedPayload>();
@@ -153,29 +151,13 @@ internal sealed class PayloadClient : IDisposable
 
         await foreach (var payload in this.payloadChannel.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            if (payload.FlushCompletion is not null)
-            {
-                deviceEventCounts.Clear();
-                await this.ProcessFlushAsync(
-                        pendingPayloads,
-                        payload.FlushCompletion,
-                        payload.CancellationToken)
-                    .ConfigureAwait(false);
-                if (payload.FlushCompletion.Task.IsCompletedSuccessfully)
-                {
-                    bufferedPointCount = 0;
-                }
-
-                continue;
-            }
-
             pendingPayloads.Enqueue(payload);
-            bufferedPointCount += payload.Points!.Count;
+            bufferedPointCount += payload.Points.Count;
             var droppedPoints = this.TrimBuffer(pendingPayloads, ref bufferedPointCount);
             LogDroppedPoints(droppedPoints);
 
-            deviceEventCounts.TryGetValue(payload.SerialNumber!, out var eventCount);
-            deviceEventCounts[payload.SerialNumber!] = ++eventCount;
+            deviceEventCounts.TryGetValue(payload.SerialNumber, out var eventCount);
+            deviceEventCounts[payload.SerialNumber] = ++eventCount;
             if (eventCount < this.eventsPerWrite)
             {
                 continue;
@@ -190,33 +172,15 @@ internal sealed class PayloadClient : IDisposable
             }
             catch (OperationCanceledException) when (this.writerCancellationToken.IsCancellationRequested)
             {
-                // A final explicit flush can retry the retained payloads with its own token.
+                // Terminal completion retries retained payloads with its independent timeout.
             }
             catch (Exception exception)
             {
                 ConsoleLogger.Error(exception);
             }
         }
-    }
 
-    private async Task ProcessFlushAsync(
-        Queue<BufferedPayload> pendingPayloads,
-        TaskCompletionSource completion,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await this.WritePendingPayloadsAsync(pendingPayloads, cancellationToken).ConfigureAwait(false);
-            completion.TrySetResult();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            completion.TrySetCanceled(cancellationToken);
-        }
-        catch (Exception exception)
-        {
-            completion.TrySetException(exception);
-        }
+        return pendingPayloads;
     }
 
     private async Task WritePendingPayloadsAsync(
@@ -228,7 +192,7 @@ internal sealed class PayloadClient : IDisposable
             return;
         }
 
-        var points = pendingPayloads.SelectMany(payload => payload.Points!).ToList();
+        var points = pendingPayloads.SelectMany(payload => payload.Points).ToList();
         await this.writePoints(points, cancellationToken).ConfigureAwait(false);
         pendingPayloads.Clear();
         ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
@@ -240,7 +204,7 @@ internal sealed class PayloadClient : IDisposable
         while (bufferedPointCount > this.maxBufferedPoints
                && pendingPayloads.TryDequeue(out var droppedPayload))
         {
-            droppedPoints += droppedPayload.Points!.Count;
+            droppedPoints += droppedPayload.Points.Count;
             bufferedPointCount -= droppedPayload.Points.Count;
         }
 
@@ -254,4 +218,6 @@ internal sealed class PayloadClient : IDisposable
             ConsoleLogger.Warning($"InfluxDB buffer limit reached: {droppedPoints} oldest points were discarded.");
         }
     }
+
+    private sealed record BufferedPayload(string SerialNumber, List<PointData> Points);
 }

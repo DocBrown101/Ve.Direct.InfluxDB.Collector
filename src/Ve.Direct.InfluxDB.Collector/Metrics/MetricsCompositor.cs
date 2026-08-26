@@ -2,52 +2,8 @@ using System.Globalization;
 
 namespace Ve.Direct.InfluxDB.Collector.Metrics;
 
-internal sealed class MetricsCompositor : IDisposable
+internal static class MetricsCompositor
 {
-    private readonly bool calculateMissingMetrics;
-    private readonly PayloadClient payloadClient;
-
-    internal MetricsCompositor(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
-    {
-        this.calculateMissingMetrics = configuration.CalculateMissingMetrics;
-        this.payloadClient = new PayloadClient(configuration, writerCancellationToken);
-    }
-
-    internal async Task SendMetricsAsync(
-        string portName,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var metrics = ComposeMetrics(frame, this.calculateMissingMetrics);
-            ConsoleLogger.Debug($"Received metrics for device {metrics.SerialNumber} on {portName}.");
-            await this.payloadClient.WriteAsync(metrics, cancellationToken).ConfigureAwait(false);
-        }
-        catch (ArgumentException exception)
-        {
-            ConsoleLogger.Warning($"Metrics from {portName} were ignored: {exception.Message}");
-        }
-        catch (FormatException exception)
-        {
-            ConsoleLogger.Warning($"Metrics from {portName} contain an invalid number: {exception.Message}");
-        }
-        catch (OverflowException exception)
-        {
-            ConsoleLogger.Warning($"Metrics from {portName} contain a number outside the supported range: {exception.Message}");
-        }
-    }
-
-    public void Dispose()
-    {
-        this.payloadClient.Dispose();
-    }
-
-    internal Task FlushAsync(CancellationToken cancellationToken)
-    {
-        return this.payloadClient.FlushAsync(cancellationToken);
-    }
-
     internal static MetricsTransmissionModel ComposeMetrics(
         IReadOnlyDictionary<string, string> frame,
         bool calculateMissingMetrics)

@@ -1,6 +1,7 @@
 namespace Tests;
 
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using InfluxDB.Client.Writes;
 using Ve.Direct.InfluxDB.Collector.Metrics;
 using Xunit;
@@ -78,14 +79,26 @@ public sealed class MetricsPipelineTests
     public async Task WriteAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
+        var firstWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = new PayloadClient(
             "ve_direct",
             "collector",
             (points, _) =>
             {
                 calls.Enqueue(points.Select(ToLineProtocol).ToArray());
+                if (calls.Count == 1)
+                {
+                    firstWriteCompleted.TrySetResult();
+                }
+                else if (calls.Count == 2)
+                {
+                    secondWriteCompleted.TrySetResult();
+                }
+
                 return Task.CompletedTask;
             });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         for (var index = 0; index < 9; index++)
         {
@@ -100,7 +113,7 @@ public sealed class MetricsPipelineTests
         Assert.Empty(calls);
 
         await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-        await client.FlushAsync(CancellationToken.None);
+        await firstWriteCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
         Assert.Equal(70, payload.Length);
@@ -119,7 +132,8 @@ public sealed class MetricsPipelineTests
             await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
-        await client.FlushAsync(CancellationToken.None);
+        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
+        await client.CompleteAndFlushAsync(timeout.Token);
         Assert.Equal(2, calls.Count);
     }
 
@@ -168,7 +182,8 @@ public sealed class MetricsPipelineTests
         }
 
         releaseFirstWriter.SetResult();
-        await Task.WhenAll(firstWrite, client.FlushAsync(timeout.Token));
+        await firstWrite;
+        await client.CompleteAndFlushAsync(timeout.Token);
 
         Assert.Equal(2, calls.Count);
         Assert.Equal(1, maximumActiveWriters);
@@ -206,7 +221,7 @@ public sealed class MetricsPipelineTests
             await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
-        await client.FlushAsync(CancellationToken.None);
+        await client.CompleteAndFlushAsync(CancellationToken.None);
         Assert.Equal(2, calls.Count);
         Assert.Equal(50, calls.ElementAt(0).Length);
         Assert.Equal(100, calls.ElementAt(1).Length);
@@ -248,13 +263,14 @@ public sealed class MetricsPipelineTests
         }
 
         failFirstWriter.SetResult();
-        await Task.WhenAll(firstWrite, client.FlushAsync(timeout.Token));
+        await firstWrite;
+        await client.CompleteAndFlushAsync(timeout.Token);
 
         Assert.Equal([50, 100], calls.ToArray());
     }
 
     [Fact]
-    public async Task FlushAsync_DuringTriggeredWrite_IsSerializedAndIncludesNewPoints()
+    public async Task CompleteAndFlushAsync_DuringTriggeredWrite_IsSerializedAndIncludesNewPoints()
     {
         var calls = new ConcurrentQueue<int>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -292,17 +308,18 @@ public sealed class MetricsPipelineTests
         var triggeredWrite = client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
         await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
-        var explicitFlush = client.FlushAsync(timeout.Token);
+        await triggeredWrite;
+        var completion = client.CompleteAndFlushAsync(timeout.Token);
 
         releaseFirstWriter.SetResult();
-        await Task.WhenAll(triggeredWrite, explicitFlush);
+        await completion;
 
         Assert.Equal([50, 5], calls.ToArray());
         Assert.Equal(1, maximumActiveWriters);
     }
 
     [Fact]
-    public async Task FlushAsync_CanceledSharedWriter_RetriesWithFlushToken()
+    public async Task CompleteAndFlushAsync_CanceledSharedWriter_RetriesWithCompletionToken()
     {
         var calls = new ConcurrentQueue<int>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -333,14 +350,14 @@ public sealed class MetricsPipelineTests
         await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
         writerCancellation.Cancel();
 
-        await client.FlushAsync(timeout.Token);
         await canceledWrite;
+        await client.CompleteAndFlushAsync(timeout.Token);
 
         Assert.Equal([50, 55], calls.ToArray());
     }
 
     [Fact]
-    public async Task FlushAsync_BufferLimit_DiscardsOldestCompleteFrames()
+    public async Task CompleteAndFlushAsync_BufferLimit_DiscardsOldestCompleteFrames()
     {
         var calls = new ConcurrentQueue<string[]>();
         using var client = new PayloadClient(
@@ -357,7 +374,7 @@ public sealed class MetricsPipelineTests
         await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
         await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         await client.WriteAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
-        await client.FlushAsync(CancellationToken.None);
+        await client.CompleteAndFlushAsync(CancellationToken.None);
 
         var payload = Assert.Single(calls);
         Assert.Equal(10, payload.Length);
@@ -367,7 +384,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task FlushAsync_FailedWrite_PropagatesErrorAndRetainsPoints()
+    public async Task CompleteAndFlushAsync_FailedWrite_PropagatesError()
     {
         var calls = new ConcurrentQueue<int>();
         var attempt = 0;
@@ -387,14 +404,14 @@ public sealed class MetricsPipelineTests
 
         await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.FlushAsync(CancellationToken.None));
-        await client.FlushAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.CompleteAndFlushAsync(CancellationToken.None));
 
-        Assert.Equal([5, 5], calls.ToArray());
+        Assert.Equal([5], calls.ToArray());
     }
 
     [Fact]
-    public async Task FlushAsync_LessThanThreshold_WritesRemainingPointsOnce()
+    public async Task CompleteAndFlushAsync_LessThanThreshold_WritesRemainingPointsOnce()
     {
         var calls = new ConcurrentQueue<int>();
         using var client = new PayloadClient(
@@ -407,10 +424,22 @@ public sealed class MetricsPipelineTests
             });
 
         await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-        await client.FlushAsync(CancellationToken.None);
-        await client.FlushAsync(CancellationToken.None);
+        await client.CompleteAndFlushAsync(CancellationToken.None);
 
         Assert.Equal([5], calls.ToArray());
+    }
+
+    [Fact]
+    public async Task CompleteAndFlushAsync_RejectsFurtherCompletionsAndWrites()
+    {
+        using var client = new PayloadClient("ve_direct", "collector", (_, _) => Task.CompletedTask);
+
+        await client.CompleteAndFlushAsync(CancellationToken.None);
+
+        await Assert.ThrowsAsync<ChannelClosedException>(() =>
+            client.CompleteAndFlushAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<ChannelClosedException>(() =>
+            client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None));
     }
 
     private static string ToLineProtocol(PointData point)

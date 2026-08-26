@@ -1,9 +1,5 @@
 using System.Runtime.InteropServices;
-using System.Text;
 using McMaster.Extensions.CommandLineUtils;
-using Ve.Direct.InfluxDB.Collector.Metrics;
-using Ve.Direct.InfluxDB.Collector.ProtocolReader;
-using Ve.Direct.InfluxDB.Collector.SerialPorts;
 
 namespace Ve.Direct.InfluxDB.Collector;
 
@@ -14,11 +10,13 @@ public static class Program
         var app = new CommandLineApplication();
         var configuration = new CollectorConfiguration(app);
         app.HelpOption();
-        app.OnExecuteAsync(cancellationToken => RunAsync(configuration, cancellationToken));
+        app.OnExecuteAsync(cancellationToken => RunHostAsync(configuration, cancellationToken));
         return app.ExecuteAsync(args);
     }
 
-    private static async Task<int> RunAsync(CollectorConfiguration configuration, CancellationToken cancellationToken)
+    private static async Task<int> RunHostAsync(
+        CollectorConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         ConsoleLogger.Init(configuration.DebugOutput, "4.0.0");
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -43,21 +41,9 @@ public static class Program
         {
             var scanInterval = TimeSpan.FromSeconds(configuration.ScanInterval);
             ConsoleLogger.Info("Starting VE.Direct collection with automatic port discovery.");
-
-            if (configuration.Output == CollectorConfiguration.OutputDefinition.Influx)
-            {
-                using var metrics = new MetricsCompositor(configuration, shutdown.Token);
-                var manager = new VEDirectDeviceManager(metrics.SendMetricsAsync, scanInterval);
-                await manager.RunAsync(shutdown.Token).ConfigureAwait(false);
-
-                using var finalFlush = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await metrics.FlushAsync(finalFlush.Token).ConfigureAwait(false);
-            }
-            else
-            {
-                var manager = new VEDirectDeviceManager(WriteMetricsAsync, scanInterval);
-                await manager.RunAsync(shutdown.Token).ConfigureAwait(false);
-            }
+            using var frameOutput = CreateFrameOutput(configuration, shutdown.Token);
+            var collector = new VEDirectCollector(frameOutput, scanInterval);
+            await collector.RunMainLoopAsync(shutdown.Token).ConfigureAwait(false);
 
             return 0;
         }
@@ -73,22 +59,17 @@ public static class Program
         }
     }
 
-    private static Task WriteMetricsAsync(
-        string portName,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken)
+    private static IFrameOutput CreateFrameOutput(
+        CollectorConfiguration configuration,
+        CancellationToken writerCancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var output = new StringBuilder().AppendLine($"Device: {frame["SER#"]} ({portName})");
-        foreach (var (key, value) in frame)
+        return configuration.Output switch
         {
-            var outputValue = key.Equals("PID", StringComparison.OrdinalIgnoreCase)
-                ? value.GetVictronDeviceNameByPid()
-                : value;
-            output.AppendLine($"KeyValue: {key} - {outputValue}");
-        }
-        output.AppendLine("---");
-        Console.Write(output);
-        return Task.CompletedTask;
+            CollectorConfiguration.OutputDefinition.Console => new ConsoleFrameOutput(),
+            CollectorConfiguration.OutputDefinition.Influx => new InfluxFrameOutput(
+                configuration,
+                writerCancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(configuration), configuration.Output, "Unknown output.")
+        };
     }
 }

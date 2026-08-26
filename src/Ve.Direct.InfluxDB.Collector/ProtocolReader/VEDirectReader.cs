@@ -87,7 +87,7 @@ internal sealed class VEDirectReader(string serialPortName)
         return false;
     }
 
-    internal async Task ReadSerialPortDataAsync(
+    internal async Task ReadFramesUntilDisconnectedAsync(
         Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
         CancellationToken cancellationToken)
     {

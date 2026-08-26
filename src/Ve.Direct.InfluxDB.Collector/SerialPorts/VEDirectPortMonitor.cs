@@ -4,7 +4,7 @@ using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector.SerialPorts;
 
-internal sealed class VEDirectDeviceManager
+internal sealed class VEDirectPortMonitor
 {
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(2);
 
@@ -14,14 +14,14 @@ internal sealed class VEDirectDeviceManager
     private readonly Dictionary<string, ActiveReader> activeReaders = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> serialOwners = new(StringComparer.Ordinal);
 
-    internal VEDirectDeviceManager(
+    internal VEDirectPortMonitor(
         DeviceFrameHandler processFrame,
         TimeSpan scanInterval)
         : this(processFrame, new MonitoringIntervals(scanInterval, ReconnectDelay), PortSource.System)
     {
     }
 
-    internal VEDirectDeviceManager(
+    internal VEDirectPortMonitor(
         DeviceFrameHandler processFrame,
         MonitoringIntervals intervals,
         PortSource serialPorts)
@@ -31,13 +31,13 @@ internal sealed class VEDirectDeviceManager
         this.serialPorts = serialPorts;
     }
 
-    internal async Task RunAsync(CancellationToken cancellationToken)
+    internal async Task MonitorPortsAsync(CancellationToken cancellationToken)
     {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await this.UpdatePortsAsync().ConfigureAwait(false);
+                await this.ScanPortsAsync().ConfigureAwait(false);
                 await Task.Delay(this.intervals.Scan, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -50,7 +50,7 @@ internal sealed class VEDirectDeviceManager
         }
     }
 
-    private async Task UpdatePortsAsync()
+    private async Task ScanPortsAsync()
     {
         string[] discoveredPorts;
         try
@@ -72,19 +72,20 @@ internal sealed class VEDirectDeviceManager
         foreach (var port in desiredPorts.Where(port => !this.activeReaders.ContainsKey(port)).Order(StringComparer.Ordinal))
         {
             var cancellation = new CancellationTokenSource();
-            var task = Task.Run(() => this.RunReaderAsync(port, cancellation.Token), CancellationToken.None);
+            var task = Task.Run(() => this.RunPortReaderLoopAsync(port, cancellation.Token), CancellationToken.None);
             this.activeReaders.Add(port, new ActiveReader(cancellation, task));
             ConsoleLogger.Info($"Monitoring serial port {port}.");
         }
     }
 
-    private async Task RunReaderAsync(string portName, CancellationToken cancellationToken)
+    private async Task RunPortReaderLoopAsync(string portName, CancellationToken cancellationToken)
     {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await this.ReadPortOnceAsync(new ReaderState(portName), cancellationToken).ConfigureAwait(false);
+                await this.ReadPortUntilDisconnectedAsync(new ReaderState(portName), cancellationToken)
+                    .ConfigureAwait(false);
                 await Task.Delay(this.intervals.Reconnect, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -93,7 +94,9 @@ internal sealed class VEDirectDeviceManager
         }
     }
 
-    private async Task ReadPortOnceAsync(ReaderState reader, CancellationToken cancellationToken)
+    private async Task ReadPortUntilDisconnectedAsync(
+        ReaderState reader,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -235,7 +238,7 @@ internal sealed class VEDirectDeviceManager
         internal static PortSource System { get; } = new(
             SerialPort.GetPortNames,
             (portName, processFrame, cancellationToken) =>
-                new VEDirectReader(portName).ReadSerialPortDataAsync(processFrame, cancellationToken));
+                new VEDirectReader(portName).ReadFramesUntilDisconnectedAsync(processFrame, cancellationToken));
 
         internal string[] GetPortNames()
         {
