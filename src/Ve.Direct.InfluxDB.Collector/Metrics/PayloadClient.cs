@@ -16,8 +16,8 @@ internal sealed class PayloadClient : IDisposable
     private readonly int eventsPerWrite;
     private readonly int maxBufferedPoints;
     private readonly CancellationTokenSource writerCancellation;
-    private readonly Channel<DevicePayload> payloadChannel;
-    private readonly Task workerTask;
+    private readonly ChannelWriter<DevicePayload> payloadWriter;
+    private readonly Task writerTask;
     private bool isDisposed;
 
     internal PayloadClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
@@ -39,8 +39,9 @@ internal sealed class PayloadClient : IDisposable
             configuration.InfluxDbBucket,
             configuration.InfluxDbOrg,
             cancellationToken);
-        this.payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
-        this.workerTask = this.ProcessPayloadsAsync();
+        var payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
+        this.payloadWriter = payloadChannel.Writer;
+        this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
     internal PayloadClient(
@@ -60,17 +61,18 @@ internal sealed class PayloadClient : IDisposable
         this.eventsPerWrite = eventsPerWrite;
         this.maxBufferedPoints = maxBufferedPoints;
         this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
-        this.payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
-        this.workerTask = this.ProcessPayloadsAsync();
+        var payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
+        this.payloadWriter = payloadChannel.Writer;
+        this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
-    internal Task WriteAsync(MetricsTransmissionModel metrics, CancellationToken cancellationToken)
+    internal Task EnqueueAsync(MetricsTransmissionModel metrics, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var devicePayload = new DevicePayload(
             metrics.SerialNumber,
             this.CreatePayload(metrics, DateTime.UtcNow));
-        return this.payloadChannel.Writer.WriteAsync(devicePayload, cancellationToken).AsTask();
+        return this.payloadWriter.WriteAsync(devicePayload, cancellationToken).AsTask();
     }
 
     public void Dispose()
@@ -81,11 +83,11 @@ internal sealed class PayloadClient : IDisposable
         }
 
         this.isDisposed = true;
-        this.payloadChannel.Writer.TryComplete();
+        this.payloadWriter.TryComplete();
         this.writerCancellation.Cancel();
         try
         {
-            this.workerTask.GetAwaiter().GetResult();
+            this.writerTask.GetAwaiter().GetResult();
         }
         finally
         {
@@ -144,13 +146,13 @@ internal sealed class PayloadClient : IDisposable
         });
     }
 
-    private async Task ProcessPayloadsAsync()
+    private async Task ConsumePayloadsAsync(ChannelReader<DevicePayload> payloadReader)
     {
         var deviceEventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var pendingPayloads = new Queue<DevicePayload>();
         var bufferedPointCount = 0;
 
-        await foreach (var payload in this.payloadChannel.Reader.ReadAllAsync().ConfigureAwait(false))
+        await foreach (var payload in payloadReader.ReadAllAsync().ConfigureAwait(false))
         {
             pendingPayloads.Enqueue(payload);
             bufferedPointCount += payload.Points.Count;

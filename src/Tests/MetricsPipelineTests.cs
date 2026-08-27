@@ -75,7 +75,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
+    public async Task EnqueueAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
         var firstWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -101,17 +101,17 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
         }
 
         for (var index = 0; index < 4; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
         Assert.Empty(calls);
 
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
         await firstWriteCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
@@ -121,14 +121,14 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 6; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
         Assert.Single(calls);
 
         for (var index = 0; index < 4; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
@@ -136,7 +136,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteAsync_ThresholdReachedDuringWrite_QueuesNextBatchWithoutOverlap()
+    public async Task EnqueueAsync_ThresholdReachedDuringWrite_QueuesNextBatchWithoutOverlap()
     {
         var calls = new ConcurrentQueue<string[]>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -174,15 +174,15 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
         }
 
-        var firstWrite = client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+        var firstWrite = client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
         }
 
         releaseFirstWriter.SetResult();
@@ -195,7 +195,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteAsync_FailedBatch_IsRetriedWithNextBatch()
+    public async Task EnqueueAsync_FailedBatch_IsRetriedWithNextBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -218,14 +218,14 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
         }
 
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
         }
 
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
@@ -235,7 +235,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteAsync_FailsAfterNextThreshold_RetriesWithoutWaitingForAnotherEvent()
+    public async Task EnqueueAsync_FailsAfterNextThreshold_RetriesWithoutWaitingForAnotherEvent()
     {
         var calls = new ConcurrentQueue<int>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -261,15 +261,15 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
         }
 
-        var firstWrite = client.WriteAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+        var firstWrite = client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.WriteAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
+            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
         }
 
         failFirstWriter.SetResult();
@@ -280,7 +280,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteAsync_BufferLimit_DiscardsOldestCompleteFrames()
+    public async Task EnqueueAsync_BufferLimit_DiscardsOldestCompleteFrames()
     {
         var calls = new ConcurrentQueue<string[]>();
         var writeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -297,10 +297,10 @@ public sealed class MetricsPipelineTests
             maxBufferedPoints: 10);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-        await client.WriteAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
-        await client.WriteAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
-        await client.WriteAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
         await writeCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
@@ -326,7 +326,7 @@ public sealed class MetricsPipelineTests
             eventsPerWrite: 1);
         using var testTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await client.WriteAsync(new MetricsTransmissionModel("HQ111"), testTimeout.Token);
+        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), testTimeout.Token);
         await writerEntered.Task.WaitAsync(testTimeout.Token);
 
         var disposeTask = Task.Run(client.Dispose, TestContext.Current.CancellationToken);

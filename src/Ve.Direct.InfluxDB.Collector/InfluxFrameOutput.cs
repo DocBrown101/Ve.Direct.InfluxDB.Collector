@@ -22,7 +22,7 @@ internal sealed class InfluxFrameOutput : IFrameOutput
         {
             var metrics = MetricsCompositor.ComposeMetrics(frame, this.calculateMissingMetrics);
             ConsoleLogger.Debug($"Received metrics for device {metrics.SerialNumber} on {portName}.");
-            await this.payloadClient.WriteAsync(metrics, cancellationToken).ConfigureAwait(false);
+            await this.payloadClient.EnqueueAsync(metrics, cancellationToken).ConfigureAwait(false);
         }
         catch (ArgumentException exception)
         {
