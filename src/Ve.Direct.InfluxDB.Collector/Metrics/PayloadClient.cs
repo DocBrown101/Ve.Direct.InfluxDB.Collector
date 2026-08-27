@@ -16,7 +16,7 @@ internal sealed class PayloadClient : IDisposable
     private readonly int eventsPerWrite;
     private readonly int maxBufferedPoints;
     private readonly CancellationTokenSource writerCancellation;
-    private readonly Channel<BufferedPayload> payloadChannel;
+    private readonly Channel<DevicePayload> payloadChannel;
     private readonly Task workerTask;
     private bool isDisposed;
 
@@ -67,10 +67,10 @@ internal sealed class PayloadClient : IDisposable
     internal Task WriteAsync(MetricsTransmissionModel metrics, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var payload = new BufferedPayload(
+        var devicePayload = new DevicePayload(
             metrics.SerialNumber,
             this.CreatePayload(metrics, DateTime.UtcNow));
-        return this.payloadChannel.Writer.WriteAsync(payload, cancellationToken).AsTask();
+        return this.payloadChannel.Writer.WriteAsync(devicePayload, cancellationToken).AsTask();
     }
 
     public void Dispose()
@@ -132,9 +132,9 @@ internal sealed class PayloadClient : IDisposable
             .Tag("device", metrics.SerialNumber);
     }
 
-    private static Channel<BufferedPayload> CreatePayloadChannel(int maxBufferedPoints)
+    private static Channel<DevicePayload> CreatePayloadChannel(int maxBufferedPoints)
     {
-        return Channel.CreateBounded<BufferedPayload>(new BoundedChannelOptions(
+        return Channel.CreateBounded<DevicePayload>(new BoundedChannelOptions(
             Math.Max(1, maxBufferedPoints / PointsPerPayload))
         {
             AllowSynchronousContinuations = false,
@@ -147,7 +147,7 @@ internal sealed class PayloadClient : IDisposable
     private async Task ProcessPayloadsAsync()
     {
         var deviceEventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var pendingPayloads = new Queue<BufferedPayload>();
+        var pendingPayloads = new Queue<DevicePayload>();
         var bufferedPointCount = 0;
 
         await foreach (var payload in this.payloadChannel.Reader.ReadAllAsync().ConfigureAwait(false))
@@ -183,7 +183,7 @@ internal sealed class PayloadClient : IDisposable
     }
 
     private async Task WritePendingPayloadsAsync(
-        Queue<BufferedPayload> pendingPayloads,
+        Queue<DevicePayload> pendingPayloads,
         CancellationToken cancellationToken)
     {
         if (pendingPayloads.Count == 0)
@@ -197,7 +197,7 @@ internal sealed class PayloadClient : IDisposable
         ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
     }
 
-    private int TrimBuffer(Queue<BufferedPayload> pendingPayloads, ref int bufferedPointCount)
+    private int TrimBuffer(Queue<DevicePayload> pendingPayloads, ref int bufferedPointCount)
     {
         var droppedPoints = 0;
         while (bufferedPointCount > this.maxBufferedPoints
@@ -218,5 +218,5 @@ internal sealed class PayloadClient : IDisposable
         }
     }
 
-    private sealed record BufferedPayload(string SerialNumber, List<PointData> Points);
+    private sealed record DevicePayload(string SerialNumber, List<PointData> Points);
 }
