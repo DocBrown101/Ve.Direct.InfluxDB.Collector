@@ -1,49 +1,22 @@
-$BuildPathWinX64 = ".\output\win-x64"
-$BuildPathLinuxX64 = ".\output\linux-x64"
-$BuildPathLinuxARM64 = ".\output\linux-arm64"
-$Version = Get-Date -Format "yyyy-MM-dd" # 2020-11-1
-$VersionDot = $Version -replace '-','.'
+$Runtimes = "win-x64", "linux-x64", "linux-arm64"
+$VersionDot = Get-Date -Format "yyyy.MM.dd"
 
 # Dotnet restore and build
-dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.InfluxDB.Collector.csproj" `
-	   --runtime win-x64 `
-	   --self-contained false `
-	   -c Release `
-	   -v minimal `
-	   -o $BuildPathWinX64 `
-	   -f net10.0 `
-	   -p:PublishReadyToRun=false `
-	   -p:PublishSingleFile=true `
-	   -p:CopyOutputSymbolsToPublishDirectory=false `
-	   -p:Version=$VersionDot `
-	   --nologo
+foreach ($Runtime in $Runtimes) {
+	dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.InfluxDB.Collector.csproj" `
+		--runtime $Runtime `
+		--self-contained false `
+		-c Release `
+		-v minimal `
+		-o ".\output\$Runtime" `
+		-f net10.0 `
+		-p:PublishReadyToRun=false `
+		-p:PublishSingleFile=true `
+		-p:CopyOutputSymbolsToPublishDirectory=false `
+		-p:Version=$VersionDot `
+		--nologo
+}
 
-dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.InfluxDB.Collector.csproj" `
-	   --runtime linux-x64 `
-	   --self-contained false `
-	   -c Release `
-	   -v minimal `
-	   -o $BuildPathLinuxX64 `
-	   -f net10.0 `
-	   -p:PublishReadyToRun=false `
-	   -p:PublishSingleFile=true `
-	   -p:CopyOutputSymbolsToPublishDirectory=false `
-	   -p:Version=$VersionDot `
-	   --nologo
-
-dotnet publish "$PSScriptRoot\..\src\Ve.Direct.InfluxDB.Collector\Ve.Direct.InfluxDB.Collector.csproj" `
-	   --runtime linux-arm64 `
-	   --self-contained false `
-	   -c Release `
-	   -v minimal `
-	   -o $BuildPathLinuxARM64 `
-	   -f net10.0 `
-	   -p:PublishReadyToRun=false `
-	   -p:PublishSingleFile=true `
-	   -p:CopyOutputSymbolsToPublishDirectory=false `
-	   -p:Version=$VersionDot `
-	   --nologo
-
-Compress-Archive -Path "$BuildPathWinX64" -DestinationPath "$BuildPathWinX64"
-Compress-Archive -Path "$BuildPathLinuxX64" -DestinationPath "$BuildPathLinuxX64"
-Compress-Archive -Path "$BuildPathLinuxARM64" -DestinationPath "$BuildPathLinuxARM64"
+foreach ($Runtime in $Runtimes) {
+	Compress-Archive -Path ".\output\$Runtime" -DestinationPath ".\output\$Runtime"
+}

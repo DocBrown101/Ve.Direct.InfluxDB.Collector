@@ -11,7 +11,7 @@ internal sealed class PayloadClient : IDisposable
 
     private readonly string metricPrefix;
     private readonly string hostName;
-    private readonly Func<List<PointData>, CancellationToken, Task> writePoints;
+    private readonly Func<List<PointData>, CancellationToken, Task> writePointsToDataBase;
     private readonly InfluxDBClient? influxDBClient;
     private readonly int eventsPerWrite;
     private readonly int maxBufferedPoints;
@@ -34,7 +34,7 @@ internal sealed class PayloadClient : IDisposable
                 .Org(configuration.InfluxDbOrg)
                 .Build());
         var writeApi = this.influxDBClient.GetWriteApiAsync();
-        this.writePoints = (points, cancellationToken) => writeApi.WritePointsAsync(
+        this.writePointsToDataBase = (points, cancellationToken) => writeApi.WritePointsAsync(
             points,
             configuration.InfluxDbBucket,
             configuration.InfluxDbOrg,
@@ -57,7 +57,7 @@ internal sealed class PayloadClient : IDisposable
 
         this.metricPrefix = metricPrefix;
         this.hostName = hostName;
-        this.writePoints = writePoints;
+        this.writePointsToDataBase = writePoints;
         this.eventsPerWrite = eventsPerWrite;
         this.maxBufferedPoints = maxBufferedPoints;
         this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
@@ -156,8 +156,7 @@ internal sealed class PayloadClient : IDisposable
         {
             pendingPayloads.Enqueue(payload);
             bufferedPointCount += payload.Points.Count;
-            var droppedPoints = this.TrimBuffer(pendingPayloads, ref bufferedPointCount);
-            LogDroppedPoints(droppedPoints);
+            this.TrimBuffer(pendingPayloads, ref bufferedPointCount);
 
             deviceEventCounts.TryGetValue(payload.SerialNumber, out var eventCount);
             deviceEventCounts[payload.SerialNumber] = ++eventCount;
@@ -169,9 +168,13 @@ internal sealed class PayloadClient : IDisposable
             deviceEventCounts.Clear();
             try
             {
-                await this.WritePendingPayloadsAsync(pendingPayloads, this.writerCancellation.Token)
+                var points = pendingPayloads.SelectMany(payload => payload.Points).ToList();
+                await this.writePointsToDataBase(points, this.writerCancellation.Token)
+                    .WaitAsync(this.writerCancellation.Token)
                     .ConfigureAwait(false);
+                pendingPayloads.Clear();
                 bufferedPointCount = 0;
+                ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
             }
             catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
             {
@@ -184,22 +187,7 @@ internal sealed class PayloadClient : IDisposable
         }
     }
 
-    private async Task WritePendingPayloadsAsync(
-        Queue<DevicePayload> pendingPayloads,
-        CancellationToken cancellationToken)
-    {
-        if (pendingPayloads.Count == 0)
-        {
-            return;
-        }
-
-        var points = pendingPayloads.SelectMany(payload => payload.Points).ToList();
-        await this.writePoints(points, cancellationToken).WaitAsync(cancellationToken).ConfigureAwait(false);
-        pendingPayloads.Clear();
-        ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
-    }
-
-    private int TrimBuffer(Queue<DevicePayload> pendingPayloads, ref int bufferedPointCount)
+    private void TrimBuffer(Queue<DevicePayload> pendingPayloads, ref int bufferedPointCount)
     {
         var droppedPoints = 0;
         while (bufferedPointCount > this.maxBufferedPoints
@@ -209,11 +197,6 @@ internal sealed class PayloadClient : IDisposable
             bufferedPointCount -= droppedPayload.Points.Count;
         }
 
-        return droppedPoints;
-    }
-
-    private static void LogDroppedPoints(int droppedPoints)
-    {
         if (droppedPoints > 0)
         {
             ConsoleLogger.Warning($"InfluxDB buffer limit reached: {droppedPoints} oldest points were discarded.");

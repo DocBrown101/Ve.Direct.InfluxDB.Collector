@@ -26,7 +26,7 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        await RunUntilAsync(monitor, validFrameSent.Task);
+        await RunUntilAsync(monitor, token => validFrameSent.Task.WaitAsync(token));
 
         var frame = Assert.Single(published);
         Assert.Equal(("/dev/ttyUSB0", "HQ111", "12900"), frame);
@@ -61,19 +61,12 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var monitorTask = monitor.MonitorPortsAsync(cancellation.Token);
-        try
+        await RunUntilAsync(monitor, async token =>
         {
-            await firstFrame.Task.WaitAsync(cancellation.Token);
+            await firstFrame.Task.WaitAsync(token);
             Volatile.Write(ref ports, ["/dev/ttyUSB2"]);
-            await twoFrames.Task.WaitAsync(cancellation.Token);
-        }
-        finally
-        {
-            cancellation.Cancel();
-            await monitorTask.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
-        }
+            await twoFrames.Task.WaitAsync(token);
+        });
 
         Assert.Equal(
             [("/dev/ttyUSB0", "HQ111"), ("/dev/ttyUSB2", "HQ111")],
@@ -107,7 +100,7 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        await RunUntilAsync(monitor, healthyReaderCompleted.Task);
+        await RunUntilAsync(monitor, token => healthyReaderCompleted.Task.WaitAsync(token));
 
         Assert.Equal(["12500", "12501", "12502"], published.ToArray());
     }
@@ -135,7 +128,7 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        await RunUntilAsync(monitor, published.Task);
+        await RunUntilAsync(monitor, token => published.Task.WaitAsync(token));
 
         Assert.Equal("HQ111", await published.Task);
         Assert.True(attempts >= 2);
@@ -167,7 +160,7 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        await RunUntilAsync(monitor, secondFrameProcessed.Task);
+        await RunUntilAsync(monitor, token => secondFrameProcessed.Task.WaitAsync(token));
 
         Assert.Equal(1, readerStarts);
         Assert.Equal(2, processedFrames);
@@ -215,20 +208,13 @@ public sealed class VEDirectPortMonitorTests
                 return Task.CompletedTask;
             });
 
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var monitorTask = monitor.MonitorPortsAsync(cancellation.Token);
-        try
+        await RunUntilAsync(monitor, async token =>
         {
-            await duplicateReported.Task.WaitAsync(cancellation.Token);
+            await duplicateReported.Task.WaitAsync(token);
             Assert.Equal(["/dev/ttyUSB9"], published.ToArray());
             Volatile.Write(ref ports, ["/dev/ttyUSB0"]);
-            await takeover.Task.WaitAsync(cancellation.Token);
-        }
-        finally
-        {
-            cancellation.Cancel();
-            await monitorTask.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
-        }
+            await takeover.Task.WaitAsync(token);
+        });
 
         Assert.Equal(["/dev/ttyUSB9", "/dev/ttyUSB0"], published.ToArray());
     }
@@ -249,13 +235,15 @@ public sealed class VEDirectPortMonitorTests
             serialPorts);
     }
 
-    private static async Task RunUntilAsync(VEDirectPortMonitor monitor, Task completion)
+    private static async Task RunUntilAsync(
+        VEDirectPortMonitor monitor,
+        Func<CancellationToken, Task> scenario)
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var monitorTask = monitor.MonitorPortsAsync(cancellation.Token);
         try
         {
-            await completion.WaitAsync(cancellation.Token);
+            await scenario(cancellation.Token);
         }
         finally
         {

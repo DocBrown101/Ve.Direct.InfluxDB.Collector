@@ -240,18 +240,9 @@ internal sealed class VEDirectPortMonitor
             (portName, processFrame, cancellationToken) =>
                 new VEDirectReader(portName).ReadFramesUntilDisconnectedAsync(processFrame, cancellationToken));
 
-        internal string[] GetPortNames()
-        {
-            return getPortNames();
-        }
+        internal Func<string[]> GetPortNames { get; } = getPortNames;
 
-        internal Task ReadAsync(
-            string portName,
-            Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
-            CancellationToken cancellationToken)
-        {
-            return readPort(portName, processFrame, cancellationToken);
-        }
+        internal ReadPort ReadAsync { get; } = readPort;
     }
 
     internal sealed record MonitoringIntervals(TimeSpan Scan, TimeSpan Reconnect);

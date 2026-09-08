@@ -142,8 +142,8 @@ public sealed class MetricsPipelineTests
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var activeWriterCounts = new ConcurrentQueue<int>();
         var activeWriters = 0;
-        var maximumActiveWriters = 0;
         using var client = new PayloadClient(
             "ve_direct",
             "collector",
@@ -151,7 +151,7 @@ public sealed class MetricsPipelineTests
             {
                 calls.Enqueue(points.Select(ToLineProtocol).ToArray());
                 var active = Interlocked.Increment(ref activeWriters);
-                InterlockedExtensions.Max(ref maximumActiveWriters, active);
+                activeWriterCounts.Enqueue(active);
                 try
                 {
                     if (calls.Count == 1)
@@ -190,7 +190,7 @@ public sealed class MetricsPipelineTests
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
 
         Assert.Equal(2, calls.Count);
-        Assert.Equal(1, maximumActiveWriters);
+        Assert.All(activeWriterCounts, count => Assert.Equal(1, count));
         Assert.All(calls, payload => Assert.Equal(50, payload.Length));
     }
 
@@ -343,23 +343,5 @@ public sealed class MetricsPipelineTests
     private static string ToLineProtocol(PointData point)
     {
         return point.ToLineProtocol(new PointSettings());
-    }
-}
-
-internal static class InterlockedExtensions
-{
-    internal static void Max(ref int target, int value)
-    {
-        var current = Volatile.Read(ref target);
-        while (current < value)
-        {
-            var previous = Interlocked.CompareExchange(ref target, value, current);
-            if (previous == current)
-            {
-                return;
-            }
-
-            current = previous;
-        }
     }
 }
