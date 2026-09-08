@@ -17,7 +17,7 @@ public sealed class MetricsPipelineTests
             new Dictionary<string, string> { ["SER#"] = "HQ222", ["V"] = "12500" },
             false);
         var timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        using var client = new PayloadClient("ve_direct", "collector", (_, _) => Task.CompletedTask);
+        using var client = new MetricsClient("ve_direct", "collector", (_, _) => Task.CompletedTask);
         var firstLines = client.CreatePayload(first, timestamp).Select(ToLineProtocol).ToArray();
         var secondLines = client.CreatePayload(second, timestamp).Select(ToLineProtocol).ToArray();
 
@@ -75,12 +75,41 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
+    public async Task WriteFrameAsync_InvalidThenValidFrame_WritesValidFrame()
+    {
+        var writeCompleted = new TaskCompletionSource<List<PointData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = new MetricsClient(
+            "ve_direct",
+            "collector",
+            (points, _) =>
+            {
+                writeCompleted.TrySetResult(points);
+                return Task.CompletedTask;
+            },
+            eventsPerWrite: 1);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await client.WriteFrameAsync(
+            "/dev/ttyUSB0",
+            new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "invalid" },
+            timeout.Token);
+        await client.WriteFrameAsync(
+            "/dev/ttyUSB0",
+            new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "13000" },
+            timeout.Token);
+
+        var payload = await writeCompleted.Task.WaitAsync(timeout.Token);
+        Assert.Equal(5, payload.Count);
+        Assert.Contains(payload, point => ToLineProtocol(point).Contains("voltage=13000i", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WriteFrameAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
         var firstWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = new PayloadClient(
+        using var client = new MetricsClient(
             "ve_direct",
             "collector",
             (points, _) =>
@@ -101,17 +130,17 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ111", CancellationToken.None);
         }
 
         for (var index = 0; index < 4; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
         }
 
         Assert.Empty(calls);
 
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
         await firstWriteCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
@@ -121,14 +150,14 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 6; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
         }
 
         Assert.Single(calls);
 
         for (var index = 0; index < 4; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
         }
 
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
@@ -136,7 +165,7 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_ThresholdReachedDuringWrite_QueuesNextBatchWithoutOverlap()
+    public async Task WriteFrameAsync_ThresholdReachedDuringWrite_QueuesNextBatchWithoutOverlap()
     {
         var calls = new ConcurrentQueue<string[]>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -144,7 +173,7 @@ public sealed class MetricsPipelineTests
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var activeWriterCounts = new ConcurrentQueue<int>();
         var activeWriters = 0;
-        using var client = new PayloadClient(
+        using var client = new MetricsClient(
             "ve_direct",
             "collector",
             async (points, cancellationToken) =>
@@ -174,15 +203,15 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+            await WriteFrameAsync(client, "HQ111", timeout.Token);
         }
 
-        var firstWrite = client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+        var firstWrite = WriteFrameAsync(client, "HQ111", timeout.Token);
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
+            await WriteFrameAsync(client, "HQ222", timeout.Token);
         }
 
         releaseFirstWriter.SetResult();
@@ -195,12 +224,12 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_FailedBatch_IsRetriedWithNextBatch()
+    public async Task WriteFrameAsync_FailedBatch_IsRetriedWithNextBatch()
     {
         var calls = new ConcurrentQueue<string[]>();
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempt = 0;
-        using var client = new PayloadClient(
+        using var client = new MetricsClient(
             "ve_direct",
             "collector",
             (points, _) =>
@@ -218,14 +247,14 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ111", CancellationToken.None);
         }
 
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
+        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
+            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
         }
 
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
@@ -235,14 +264,14 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_FailsAfterNextThreshold_RetriesWithoutWaitingForAnotherEvent()
+    public async Task WriteFrameAsync_FailsAfterNextThreshold_RetriesWithoutWaitingForAnotherEvent()
     {
         var calls = new ConcurrentQueue<int>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var attempt = 0;
-        using var client = new PayloadClient(
+        using var client = new MetricsClient(
             "ve_direct",
             "collector",
             async (points, cancellationToken) =>
@@ -261,15 +290,15 @@ public sealed class MetricsPipelineTests
 
         for (var index = 0; index < 9; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+            await WriteFrameAsync(client, "HQ111", timeout.Token);
         }
 
-        var firstWrite = client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), timeout.Token);
+        var firstWrite = WriteFrameAsync(client, "HQ111", timeout.Token);
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
 
         for (var index = 0; index < 10; index++)
         {
-            await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), timeout.Token);
+            await WriteFrameAsync(client, "HQ222", timeout.Token);
         }
 
         failFirstWriter.SetResult();
@@ -280,11 +309,11 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task EnqueueAsync_BufferLimit_DiscardsOldestCompleteFrames()
+    public async Task WriteFrameAsync_BufferLimit_DiscardsOldestCompleteFrames()
     {
         var calls = new ConcurrentQueue<string[]>();
         var writeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = new PayloadClient(
+        using var client = new MetricsClient(
             "ve_direct",
             "collector",
             (points, _) =>
@@ -297,10 +326,10 @@ public sealed class MetricsPipelineTests
             maxBufferedPoints: 10);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), CancellationToken.None);
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ222"), CancellationToken.None);
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ333"), CancellationToken.None);
+        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
+        await WriteFrameAsync(client, "HQ222", CancellationToken.None);
+        await WriteFrameAsync(client, "HQ333", CancellationToken.None);
+        await WriteFrameAsync(client, "HQ333", CancellationToken.None);
         await writeCompleted.Task.WaitAsync(timeout.Token);
 
         var payload = Assert.Single(calls);
@@ -315,7 +344,7 @@ public sealed class MetricsPipelineTests
     {
         var writerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var client = new PayloadClient(
+        var client = new MetricsClient(
             "ve_direct",
             "collector",
             async (_, _) =>
@@ -326,7 +355,7 @@ public sealed class MetricsPipelineTests
             eventsPerWrite: 1);
         using var testTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await client.EnqueueAsync(new MetricsTransmissionModel("HQ111"), testTimeout.Token);
+        await WriteFrameAsync(client, "HQ111", testTimeout.Token);
         await writerEntered.Task.WaitAsync(testTimeout.Token);
 
         var disposeTask = Task.Run(client.Dispose, TestContext.Current.CancellationToken);
@@ -343,5 +372,13 @@ public sealed class MetricsPipelineTests
     private static string ToLineProtocol(PointData point)
     {
         return point.ToLineProtocol(new PointSettings());
+    }
+
+    private static Task WriteFrameAsync(MetricsClient client, string serialNumber, CancellationToken cancellationToken)
+    {
+        return client.WriteFrameAsync(
+            "test",
+            new Dictionary<string, string> { ["SER#"] = serialNumber },
+            cancellationToken);
     }
 }

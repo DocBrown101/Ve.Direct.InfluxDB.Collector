@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using McMaster.Extensions.CommandLineUtils;
+using Ve.Direct.InfluxDB.Collector.Metrics;
 using Ve.Direct.InfluxDB.Collector.SerialPorts;
 
 namespace Ve.Direct.InfluxDB.Collector;
@@ -66,8 +67,8 @@ public static class Program
     {
         return configuration.Output switch
         {
-            CollectorConfiguration.OutputDefinition.Console => new ConsoleFrameOutput(),
-            CollectorConfiguration.OutputDefinition.Influx => new InfluxFrameOutput(
+            CollectorConfiguration.OutputDefinition.Console => new ConsoleClient(),
+            CollectorConfiguration.OutputDefinition.Influx => new MetricsClient(
                 configuration,
                 writerCancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(configuration), configuration.Output, "Unknown output.")

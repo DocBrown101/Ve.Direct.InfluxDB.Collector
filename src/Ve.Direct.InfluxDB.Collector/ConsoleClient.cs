@@ -3,9 +3,9 @@ using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector;
 
-internal sealed class ConsoleFrameOutput(TextWriter output) : IFrameOutput
+internal sealed class ConsoleClient(TextWriter output) : IFrameOutput
 {
-    internal ConsoleFrameOutput()
+    internal ConsoleClient()
         : this(Console.Out)
     {
     }

@@ -5,7 +5,7 @@ using InfluxDB.Client.Writes;
 
 namespace Ve.Direct.InfluxDB.Collector.Metrics;
 
-internal sealed class PayloadClient : IDisposable
+internal sealed class MetricsClient : IFrameOutput
 {
     private const int PointsPerPayload = 5;
 
@@ -15,17 +15,19 @@ internal sealed class PayloadClient : IDisposable
     private readonly InfluxDBClient? influxDBClient;
     private readonly int eventsPerWrite;
     private readonly int maxBufferedPoints;
+    private readonly bool calculateMissingMetrics;
     private readonly CancellationTokenSource writerCancellation;
     private readonly ChannelWriter<DevicePayload> payloadWriter;
     private readonly Task writerTask;
     private bool isDisposed;
 
-    internal PayloadClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
+    internal MetricsClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
     {
         this.metricPrefix = configuration.InfluxMetricPrefix;
         this.hostName = Environment.MachineName;
         this.eventsPerWrite = configuration.InfluxEventsPerWrite;
         this.maxBufferedPoints = configuration.InfluxMaxBufferedPoints;
+        this.calculateMissingMetrics = configuration.CalculateMissingMetrics;
         this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
         this.influxDBClient = new InfluxDBClient(
             new InfluxDBClientOptions.Builder()
@@ -44,7 +46,7 @@ internal sealed class PayloadClient : IDisposable
         this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
-    internal PayloadClient(
+    internal MetricsClient(
         string metricPrefix,
         string hostName,
         Func<List<PointData>, CancellationToken, Task> writePoints,
@@ -66,13 +68,30 @@ internal sealed class PayloadClient : IDisposable
         this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
-    internal Task EnqueueAsync(MetricsTransmissionModel metrics, CancellationToken cancellationToken)
+    public async Task WriteFrameAsync(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var devicePayload = new DevicePayload(
-            metrics.SerialNumber,
-            this.CreatePayload(metrics, DateTime.UtcNow));
-        return this.payloadWriter.WriteAsync(devicePayload, cancellationToken).AsTask();
+        try
+        {
+            var metrics = MetricsCompositor.ComposeMetrics(frame, this.calculateMissingMetrics);
+            ConsoleLogger.Debug($"Received metrics for device {metrics.SerialNumber} on {portName}.");
+            ct.ThrowIfCancellationRequested();
+            var payload = new DevicePayload(
+                metrics.SerialNumber,
+                this.CreatePayload(metrics, DateTime.UtcNow));
+            await this.payloadWriter.WriteAsync(payload, ct).ConfigureAwait(false);
+        }
+        catch (ArgumentException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} were ignored: {exception.Message}");
+        }
+        catch (FormatException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} contain an invalid number: {exception.Message}");
+        }
+        catch (OverflowException exception)
+        {
+            ConsoleLogger.Warning($"Metrics from {portName} contain a number outside the supported range: {exception.Message}");
+        }
     }
 
     public void Dispose()

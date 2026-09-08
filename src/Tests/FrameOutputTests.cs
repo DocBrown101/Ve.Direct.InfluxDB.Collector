@@ -6,10 +6,10 @@ using Xunit;
 public sealed class FrameOutputTests
 {
     [Fact]
-    public async Task ConsoleFrameOutput_WriteFrameAsync_WritesFrameToConfiguredWriter()
+    public async Task ConsoleClient_WriteFrameAsync_WritesFrameToConfiguredWriter()
     {
         using var writer = new StringWriter();
-        using var output = new ConsoleFrameOutput(writer);
+        using var output = new ConsoleClient(writer);
         var frame = new Dictionary<string, string>
         {
             ["SER#"] = "HQ111",
