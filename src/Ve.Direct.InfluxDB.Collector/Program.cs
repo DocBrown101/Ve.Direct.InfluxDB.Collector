@@ -12,16 +12,14 @@ public static class Program
         var app = new CommandLineApplication();
         var configuration = new CollectorConfiguration(app);
         app.HelpOption();
-        app.OnExecuteAsync(cancellationToken => RunHostAsync(configuration, cancellationToken));
+        app.OnExecuteAsync(ct => RunHostAsync(configuration, ct));
         return app.ExecuteAsync(args);
     }
 
-    private static async Task<int> RunHostAsync(
-        CollectorConfiguration configuration,
-        CancellationToken cancellationToken)
+    private static async Task<int> RunHostAsync(CollectorConfiguration configuration, CancellationToken ct)
     {
-        ConsoleLogger.Init(configuration.DebugOutput, "4.0.0");
-        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        ConsoleLogger.Init(configuration.DebugOutput, "4.1.0");
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(ct);
         ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
         {
             eventArgs.Cancel = true;
