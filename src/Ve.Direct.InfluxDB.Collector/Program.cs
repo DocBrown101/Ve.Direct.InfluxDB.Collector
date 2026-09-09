@@ -44,7 +44,7 @@ public static class Program
             var scanInterval = TimeSpan.FromSeconds(configuration.ScanInterval);
             ConsoleLogger.Info("Starting VE.Direct collection with automatic port discovery.");
             using var frameOutput = CreateFrameOutput(configuration, shutdown.Token);
-            var portMonitor = new VEDirectPortMonitor(frameOutput.WriteFrameAsync, scanInterval);
+            var portMonitor = new VEDirectPortMonitor(frameOutput.WriteFrameData, scanInterval);
             await portMonitor.MonitorPortsAsync(shutdown.Token).ConfigureAwait(false);
 
             return 0;

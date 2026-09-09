@@ -10,12 +10,9 @@ internal sealed class ConsoleClient(TextWriter output) : IFrameOutput
     {
     }
 
-    public Task WriteFrameAsync(
-        string portName,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken)
+    public void WriteFrameData(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
         var text = new StringBuilder().AppendLine($"Device: {frame["SER#"]} ({portName})");
         foreach (var (key, value) in frame)
         {
@@ -27,7 +24,6 @@ internal sealed class ConsoleClient(TextWriter output) : IFrameOutput
 
         text.AppendLine("---");
         output.Write(text);
-        return Task.CompletedTask;
     }
 
     public void Dispose()

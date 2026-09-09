@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Ports;
-using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector.SerialPorts;
 
@@ -31,17 +29,17 @@ internal sealed class VEDirectPortMonitor
         this.serialPorts = serialPorts;
     }
 
-    internal async Task MonitorPortsAsync(CancellationToken cancellationToken)
+    internal async Task MonitorPortsAsync(CancellationToken ct)
     {
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!ct.IsCancellationRequested)
             {
                 await this.ScanPortsAsync().ConfigureAwait(false);
-                await Task.Delay(this.intervals.Scan, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(this.intervals.Scan, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
         finally
@@ -78,39 +76,36 @@ internal sealed class VEDirectPortMonitor
         }
     }
 
-    private async Task RunPortReaderLoopAsync(string portName, CancellationToken cancellationToken)
+    private async Task RunPortReaderLoopAsync(string portName, CancellationToken ct)
     {
         try
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!ct.IsCancellationRequested)
             {
-                await this.ReadPortUntilDisconnectedAsync(new ReaderState(portName), cancellationToken)
-                    .ConfigureAwait(false);
-                await Task.Delay(this.intervals.Reconnect, cancellationToken).ConfigureAwait(false);
+                await this.ReadPortUntilDisconnectedAsync(new ReaderState(portName), ct).ConfigureAwait(false);
+                await Task.Delay(this.intervals.Reconnect, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
     }
 
-    private async Task ReadPortUntilDisconnectedAsync(
-        ReaderState reader,
-        CancellationToken cancellationToken)
+    private async Task ReadPortUntilDisconnectedAsync(ReaderState reader, CancellationToken ct)
     {
         try
         {
             await this.serialPorts.ReadAsync(
                 reader.PortName,
                 (frame, token) => this.HandleFrameAsync(reader, frame, token),
-                cancellationToken).ConfigureAwait(false);
+                ct).ConfigureAwait(false);
 
-            if (!cancellationToken.IsCancellationRequested)
+            if (!ct.IsCancellationRequested)
             {
                 ConsoleLogger.Error($"Serial port {reader.PortName} disconnected.");
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -124,10 +119,7 @@ internal sealed class VEDirectPortMonitor
         }
     }
 
-    private async Task HandleFrameAsync(
-        ReaderState reader,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken)
+    private async Task HandleFrameAsync(ReaderState reader, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
         if (!frame.TryGetValue("SER#", out var serialNumber) || string.IsNullOrWhiteSpace(serialNumber))
         {
@@ -158,7 +150,7 @@ internal sealed class VEDirectPortMonitor
             && StringComparer.Ordinal.Equals(owner, reader.PortName))
         {
             reader.LastDuplicateSerialNumber = null;
-            await this.ProcessFrameAsync(reader.PortName, frame, cancellationToken).ConfigureAwait(false);
+            await this.ProcessFrameAsync(reader.PortName, frame, ct).ConfigureAwait(false);
             return;
         }
 
@@ -172,16 +164,13 @@ internal sealed class VEDirectPortMonitor
             $"Duplicate VE.Direct device {serialNumber} detected on {owner} and {reader.PortName}; {reader.PortName} is suppressed.");
     }
 
-    private async Task ProcessFrameAsync(
-        string portName,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken)
+    private async Task ProcessFrameAsync(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
         try
         {
-            await this.processFrame(portName, frame, cancellationToken).ConfigureAwait(false);
+            this.processFrame(portName, frame, ct);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -223,40 +212,9 @@ internal sealed class VEDirectPortMonitor
         }
     }
 
-    internal delegate Task DeviceFrameHandler(
-        string portName,
-        IReadOnlyDictionary<string, string> frame,
-        CancellationToken cancellationToken);
-
-    internal delegate Task ReadPort(
-        string portName,
-        Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
-        CancellationToken cancellationToken);
-
-    internal sealed class PortSource(Func<string[]> getPortNames, ReadPort readPort)
-    {
-        internal static PortSource System { get; } = new(
-            SerialPort.GetPortNames,
-            (portName, processFrame, cancellationToken) =>
-                new VEDirectReader(portName).ReadFramesUntilDisconnectedAsync(processFrame, cancellationToken));
-
-        internal Func<string[]> GetPortNames { get; } = getPortNames;
-
-        internal ReadPort ReadAsync { get; } = readPort;
-    }
+    internal delegate void DeviceFrameHandler(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct);
 
     internal sealed record MonitoringIntervals(TimeSpan Scan, TimeSpan Reconnect);
 
     private sealed record ActiveReader(CancellationTokenSource StopSignal, Task Completion);
-
-    private sealed class ReaderState(string portName)
-    {
-        internal string PortName { get; } = portName;
-
-        internal string? SerialNumber { get; set; }
-
-        internal string? LastDuplicateSerialNumber { get; set; }
-
-        internal bool HasLoggedMissingSerial { get; set; }
-    }
 }

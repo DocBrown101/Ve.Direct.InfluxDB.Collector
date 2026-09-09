@@ -49,7 +49,12 @@ internal static class MetricsCompositor
                     metrics.TrackerState = ParseInt(value);
                     break;
                 case "LOAD": // Load output State (ON/OFF)
-                    metrics.LoadState = value == "ON" ? 1 : 0;
+                    metrics.LoadState = value switch
+                    {
+                        "ON" => 1,
+                        "OFF" => 0,
+                        _ => null
+                    };
                     break;
             }
         }

@@ -6,14 +6,14 @@ internal sealed class CollectorConfiguration
 {
     private readonly CommandOption<OutputDefinition> outputDefinition;
     private readonly CommandOption<int> scanInterval;
-    private readonly CommandOption<bool> calculateMissingMetrics;
+    private readonly CommandOption<bool> disableMissingMetrics;
     private readonly CommandOption<bool> debugOutput;
     private readonly CommandOption<string> influxDbUrl;
     private readonly CommandOption<string> influxDbBucket;
     private readonly CommandOption<string> influxDbOrg;
     private readonly CommandOption<string> influxMetricPrefix;
-    private readonly CommandOption<int> influxEventsPerWrite;
-    private readonly CommandOption<int> influxMaxBufferedPoints;
+    private readonly CommandOption<int> influxWriteInterval;
+    private readonly CommandOption<int> influxMaxQueuedFrames;
 
     internal CollectorConfiguration(CommandLineApplication app)
     {
@@ -26,7 +26,7 @@ internal sealed class CollectorConfiguration
                 "Serial port discovery interval in seconds",
                 CommandOptionType.SingleValue)
             .Accepts(value => value.Range(1, 300));
-        this.calculateMissingMetrics = app.Option<bool>("-m", "Calculate missing metrics?", CommandOptionType.NoValue);
+        this.disableMissingMetrics = app.Option<bool>("-m", "Disable calculation of missing metrics", CommandOptionType.NoValue);
         app.Option<bool>("-c", "Compatibility option; VE.Direct checksums are always validated", CommandOptionType.NoValue);
         this.debugOutput = app.Option<bool>("--debugOutput", "Enable debug output", CommandOptionType.NoValue);
 
@@ -46,16 +46,16 @@ internal sealed class CollectorConfiguration
             "--influxMetricPrefix",
             "Prefix for all metrics",
             CommandOptionType.SingleValue);
-        this.influxEventsPerWrite = app.Option<int>(
-                "--influxEventsPerWrite",
-                "Number of frames from one device that triggers a shared InfluxDB write",
+        this.influxWriteInterval = app.Option<int>(
+                "--influxWriteInterval",
+                "Interval between InfluxDB writes in seconds",
                 CommandOptionType.SingleValue)
-            .Accepts(value => value.Range(1, 3600));
-        this.influxMaxBufferedPoints = app.Option<int>(
-                "--influxMaxBufferedPoints",
-                "Maximum number of pending InfluxDB points",
+            .Accepts(value => value.Range(1, 300));
+        this.influxMaxQueuedFrames = app.Option<int>(
+                "--influxMaxQueuedFrames",
+                "Maximum number of queued VE.Direct frames",
                 CommandOptionType.SingleValue)
-            .Accepts(value => value.Range(5, 1_000_000));
+            .Accepts(value => value.Range(1, 1_000_000));
 
         this.SetDefaultValues();
     }
@@ -64,7 +64,7 @@ internal sealed class CollectorConfiguration
 
     internal int ScanInterval => this.scanInterval.ParsedValue;
 
-    internal bool CalculateMissingMetrics => this.calculateMissingMetrics.ParsedValue;
+    internal bool CalculateMissingMetrics => !this.disableMissingMetrics.ParsedValue;
 
     internal bool DebugOutput => this.debugOutput.ParsedValue;
 
@@ -76,9 +76,9 @@ internal sealed class CollectorConfiguration
 
     internal string InfluxMetricPrefix => this.influxMetricPrefix.ParsedValue;
 
-    internal int InfluxEventsPerWrite => this.influxEventsPerWrite.ParsedValue;
+    internal int InfluxWriteInterval => this.influxWriteInterval.ParsedValue;
 
-    internal int InfluxMaxBufferedPoints => this.influxMaxBufferedPoints.ParsedValue;
+    internal int InfluxMaxQueuedFrames => this.influxMaxQueuedFrames.ParsedValue;
 
     internal enum OutputDefinition
     {
@@ -90,7 +90,7 @@ internal sealed class CollectorConfiguration
     {
         this.outputDefinition.DefaultValue = OutputDefinition.Console;
         this.scanInterval.DefaultValue = 5;
-        this.calculateMissingMetrics.DefaultValue = true;
+        this.disableMissingMetrics.DefaultValue = false;
         this.debugOutput.DefaultValue = false;
 
 #pragma warning disable S5332
@@ -99,7 +99,7 @@ internal sealed class CollectorConfiguration
         this.influxDbBucket.DefaultValue = "solar";
         this.influxDbOrg.DefaultValue = "home";
         this.influxMetricPrefix.DefaultValue = "ve_direct";
-        this.influxEventsPerWrite.DefaultValue = 10;
-        this.influxMaxBufferedPoints.DefaultValue = 10_000;
+        this.influxWriteInterval.DefaultValue = 10;
+        this.influxMaxQueuedFrames.DefaultValue = 2_000;
     }
 }

@@ -6,7 +6,7 @@ using Xunit;
 public sealed class FrameOutputTests
 {
     [Fact]
-    public async Task ConsoleClient_WriteFrameAsync_WritesFrameToConfiguredWriter()
+    public async Task ConsoleClient_WriteFrameData_WritesFrameToConfiguredWriter()
     {
         using var writer = new StringWriter();
         using var output = new ConsoleClient(writer);
@@ -17,7 +17,7 @@ public sealed class FrameOutputTests
             ["V"] = "13000"
         };
 
-        await output.WriteFrameAsync("/dev/ttyUSB0", frame, CancellationToken.None);
+        output.WriteFrameData("/dev/ttyUSB0", frame, CancellationToken.None);
 
         Assert.Equal(
             $"Device: HQ111 (/dev/ttyUSB0){Environment.NewLine}"

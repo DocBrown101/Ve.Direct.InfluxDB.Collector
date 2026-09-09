@@ -23,7 +23,6 @@ public sealed class VEDirectPortMonitorTests
             (port, data, _) =>
             {
                 published.Enqueue((port, data["SER#"], data["V"]));
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, token => validFrameSent.Task.WaitAsync(token));
@@ -58,7 +57,6 @@ public sealed class VEDirectPortMonitorTests
                 {
                     twoFrames.TrySetResult();
                 }
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, async token =>
@@ -97,7 +95,6 @@ public sealed class VEDirectPortMonitorTests
             (_, data, _) =>
             {
                 published.Enqueue(data["V"]);
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, token => healthyReaderCompleted.Task.WaitAsync(token));
@@ -125,7 +122,6 @@ public sealed class VEDirectPortMonitorTests
             (_, data, _) =>
             {
                 published.TrySetResult(data["SER#"]);
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, token => published.Task.WaitAsync(token));
@@ -157,7 +153,6 @@ public sealed class VEDirectPortMonitorTests
                 }
 
                 secondFrameProcessed.TrySetResult();
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, token => secondFrameProcessed.Task.WaitAsync(token));
@@ -205,7 +200,6 @@ public sealed class VEDirectPortMonitorTests
                 {
                     takeover.TrySetResult();
                 }
-                return Task.CompletedTask;
             });
 
         await RunUntilAsync(monitor, async token =>
@@ -221,10 +215,10 @@ public sealed class VEDirectPortMonitorTests
 
     private static VEDirectPortMonitor CreateMonitor(
         Func<string[]> getPortNames,
-        VEDirectPortMonitor.ReadPort readPort,
+        ReadPort readPort,
         VEDirectPortMonitor.DeviceFrameHandler processFrame)
     {
-        var serialPorts = new VEDirectPortMonitor.PortSource(getPortNames, readPort);
+        var serialPorts = new PortSource(getPortNames, readPort);
         var intervals = new VEDirectPortMonitor.MonitoringIntervals(
             TimeSpan.FromMilliseconds(10),
             TimeSpan.FromMilliseconds(5));

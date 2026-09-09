@@ -17,18 +17,15 @@ public sealed class MetricsPipelineTests
             new Dictionary<string, string> { ["SER#"] = "HQ222", ["V"] = "12500" },
             false);
         var timestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        using var client = new MetricsClient("ve_direct", "collector", (_, _) => Task.CompletedTask);
-        var firstLines = client.CreatePayload(first, timestamp).Select(ToLineProtocol).ToArray();
-        var secondLines = client.CreatePayload(second, timestamp).Select(ToLineProtocol).ToArray();
+        using var client = CreateClient((_, _) => Task.CompletedTask);
 
-        Assert.Equal(13000, first.BatteryVoltageMillivolts);
-        Assert.Equal(12500, second.BatteryVoltageMillivolts);
-        Assert.All(firstLines, line => Assert.Contains("device=HQ111", line, StringComparison.Ordinal));
-        Assert.All(secondLines, line => Assert.Contains("device=HQ222", line, StringComparison.Ordinal));
-        Assert.Contains(firstLines, line => line.StartsWith("ve_direct_battery,", StringComparison.Ordinal)
-            && line.Contains("voltage=13000i", StringComparison.Ordinal));
-        Assert.Contains(secondLines, line => line.StartsWith("ve_direct_battery,", StringComparison.Ordinal)
-            && line.Contains("voltage=12500i", StringComparison.Ordinal));
+        var firstLine = ToLineProtocol(Assert.Single(client.CreatePayload(first, timestamp)));
+        var secondLine = ToLineProtocol(Assert.Single(client.CreatePayload(second, timestamp)));
+
+        Assert.Contains("device=HQ111", firstLine, StringComparison.Ordinal);
+        Assert.Contains("voltage=13000i", firstLine, StringComparison.Ordinal);
+        Assert.Contains("device=HQ222", secondLine, StringComparison.Ordinal);
+        Assert.Contains("voltage=12500i", secondLine, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -40,25 +37,47 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
+    public void CreatePayload_MissingFields_DoesNotWriteZeroValues()
+    {
+        var metrics = MetricsCompositor.ComposeMetrics(
+            new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "13000" },
+            true);
+        using var client = CreateClient((_, _) => Task.CompletedTask);
+
+        var line = ToLineProtocol(Assert.Single(client.CreatePayload(metrics, DateTime.UtcNow)));
+
+        Assert.StartsWith("ve_direct_battery,", line, StringComparison.Ordinal);
+        Assert.Contains("voltage=13000i", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("current=", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("power=", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreatePayload_ReportedZero_WritesZeroValue()
+    {
+        var metrics = MetricsCompositor.ComposeMetrics(
+            new Dictionary<string, string>
+            {
+                ["SER#"] = "HQ111",
+                ["V"] = "0",
+                ["I"] = "-500",
+                ["IL"] = "0",
+                ["LOAD"] = "ON"
+            },
+            true);
+        using var client = CreateClient((_, _) => Task.CompletedTask);
+
+        var lines = client.CreatePayload(metrics, DateTime.UtcNow).Select(ToLineProtocol).ToArray();
+
+        Assert.Contains(lines, line => line.Contains("voltage=0i", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("current=0i", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("Status=1i", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ComposeMetrics_KnownFields_MapsValuesAndUnits()
     {
-        var frame = new Dictionary<string, string>
-        {
-            ["SER#"] = "HQ111",
-            ["V"] = "13000",
-            ["I"] = "500",
-            ["VPV"] = "40000",
-            ["PPV"] = "200",
-            ["IL"] = "250",
-            ["H20"] = "12",
-            ["H21"] = "210",
-            ["CS"] = "3",
-            ["ERR"] = "0",
-            ["MPPT"] = "2",
-            ["LOAD"] = "ON"
-        };
-
-        var metrics = MetricsCompositor.ComposeMetrics(frame, false);
+        var metrics = MetricsCompositor.ComposeMetrics(Frame("HQ111", "13000"), false);
 
         Assert.Equal("HQ111", metrics.SerialNumber);
         Assert.Equal(13000, metrics.BatteryVoltageMillivolts);
@@ -75,46 +94,64 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task WriteFrameAsync_InvalidThenValidFrame_WritesValidFrame()
+    public async Task WriteFrameData_InvalidThenValidFrame_WritesValidFrameOnNextInterval()
     {
+        using var ticks = new SemaphoreSlim(0);
         var writeCompleted = new TaskCompletionSource<List<PointData>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
-            (points, _) =>
-            {
-                writeCompleted.TrySetResult(points);
-                return Task.CompletedTask;
-            },
-            eventsPerWrite: 1);
+        using var client = CreateClient((points, _) =>
+        {
+            writeCompleted.TrySetResult(points);
+            return Task.CompletedTask;
+        }, ticks);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await client.WriteFrameAsync(
-            "/dev/ttyUSB0",
+        client.WriteFrameData(
+            "test",
             new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "invalid" },
             timeout.Token);
-        await client.WriteFrameAsync(
-            "/dev/ttyUSB0",
+        client.WriteFrameData(
+            "test",
             new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "13000" },
             timeout.Token);
 
+        ticks.Release();
         var payload = await writeCompleted.Task.WaitAsync(timeout.Token);
-        Assert.Equal(5, payload.Count);
         Assert.Contains(payload, point => ToLineProtocol(point).Contains("voltage=13000i", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task WriteFrameAsync_FirstDeviceAtThreshold_WritesSharedDeviceBatch()
+    public async Task TestConstructor_DefaultsToProductionMetricCalculation()
     {
-        var calls = new ConcurrentQueue<string[]>();
+        using var ticks = new SemaphoreSlim(0);
+        var writeCompleted = new TaskCompletionSource<List<PointData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = CreateClient((points, _) =>
+        {
+            writeCompleted.TrySetResult(points);
+            return Task.CompletedTask;
+        }, ticks);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        client.WriteFrameData(
+            "test",
+            new Dictionary<string, string> { ["SER#"] = "HQ111", ["V"] = "13000", ["I"] = "500" },
+            timeout.Token);
+
+        ticks.Release();
+        var battery = Assert.Single(await writeCompleted.Task.WaitAsync(timeout.Token));
+        Assert.Contains("power=6500i", ToLineProtocol(battery), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Writer_ProcessesAtMostOneHundredFramesPerInterval()
+    {
+        using var ticks = new SemaphoreSlim(0);
+        var calls = new ConcurrentQueue<List<PointData>>();
         var firstWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
+        using var client = CreateClient(
             (points, _) =>
             {
-                calls.Enqueue(points.Select(ToLineProtocol).ToArray());
+                calls.Enqueue(points);
                 if (calls.Count == 1)
                 {
                     firstWriteCompleted.TrySetResult();
@@ -125,238 +162,156 @@ public sealed class MetricsPipelineTests
                 }
 
                 return Task.CompletedTask;
-            });
+            },
+            ticks,
+            maxQueuedFrames: 101);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        for (var index = 0; index < 9; index++)
+        for (var index = 0; index < 101; index++)
         {
-            await WriteFrameAsync(client, "HQ111", CancellationToken.None);
+            WriteFrameData(client, $"HQ{index}", timeout.Token);
         }
 
-        for (var index = 0; index < 4; index++)
-        {
-            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
-        }
-
-        Assert.Empty(calls);
-
-        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
+        ticks.Release();
         await firstWriteCompleted.Task.WaitAsync(timeout.Token);
-
-        var payload = Assert.Single(calls);
-        Assert.Equal(70, payload.Length);
-        Assert.Equal(50, payload.Count(line => line.Contains("device=HQ111", StringComparison.Ordinal)));
-        Assert.Equal(20, payload.Count(line => line.Contains("device=HQ222", StringComparison.Ordinal)));
-
-        for (var index = 0; index < 6; index++)
-        {
-            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
-        }
-
-        Assert.Single(calls);
-
-        for (var index = 0; index < 4; index++)
-        {
-            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
-        }
-
+        ticks.Release();
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
-        Assert.Equal(2, calls.Count);
+
+        Assert.Equal(500, calls.ElementAt(0).Count);
+        Assert.Equal(5, calls.ElementAt(1).Count);
     }
 
     [Fact]
-    public async Task WriteFrameAsync_ThresholdReachedDuringWrite_QueuesNextBatchWithoutOverlap()
+    public async Task Writer_FailedBatch_IsRetriedUnchanged()
     {
+        using var ticks = new SemaphoreSlim(0);
+        var calls = new ConcurrentQueue<string[]>();
+        var firstAttemptCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextBatchCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = CreateClient((points, _) =>
+        {
+            calls.Enqueue(points.Select(ToLineProtocol).ToArray());
+            if (calls.Count == 1)
+            {
+                firstAttemptCompleted.TrySetResult();
+                throw new InvalidOperationException("InfluxDB unavailable");
+            }
+
+            if (calls.Count == 2)
+            {
+                retryCompleted.TrySetResult();
+            }
+            else
+            {
+                nextBatchCompleted.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }, ticks);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        WriteFrameData(client, "HQ111", timeout.Token);
+        ticks.Release();
+        await firstAttemptCompleted.Task.WaitAsync(timeout.Token);
+        WriteFrameData(client, "HQ222", timeout.Token);
+        ticks.Release();
+        await retryCompleted.Task.WaitAsync(timeout.Token);
+
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls.ElementAt(0), calls.ElementAt(1));
+        Assert.DoesNotContain(calls.ElementAt(1), line => line.Contains("device=HQ222", StringComparison.Ordinal));
+
+        ticks.Release();
+        await nextBatchCompleted.Task.WaitAsync(timeout.Token);
+        Assert.All(calls.ElementAt(2), line => Assert.Contains("device=HQ222", line, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Writer_FullQueue_DropsOldestFrame()
+    {
+        using var ticks = new SemaphoreSlim(0);
+        var writeCompleted = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var client = CreateClient(
+            (points, _) =>
+            {
+                writeCompleted.TrySetResult(points.Select(ToLineProtocol).ToArray());
+                return Task.CompletedTask;
+            },
+            ticks,
+            maxQueuedFrames: 2);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        WriteFrameData(client, "HQ111", timeout.Token);
+        WriteFrameData(client, "HQ222", timeout.Token);
+        WriteFrameData(client, "HQ333", timeout.Token);
+
+        ticks.Release();
+        var payload = await writeCompleted.Task.WaitAsync(timeout.Token);
+        Assert.DoesNotContain(payload, line => line.Contains("device=HQ111", StringComparison.Ordinal));
+        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ222", StringComparison.Ordinal)));
+        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ333", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task WriteFrameData_BlockedWriter_DoesNotBlockProducers()
+    {
+        using var ticks = new SemaphoreSlim(0);
         var calls = new ConcurrentQueue<string[]>();
         var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var activeWriterCounts = new ConcurrentQueue<int>();
-        var activeWriters = 0;
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
+        using var client = CreateClient(
             async (points, cancellationToken) =>
             {
                 calls.Enqueue(points.Select(ToLineProtocol).ToArray());
-                var active = Interlocked.Increment(ref activeWriters);
-                activeWriterCounts.Enqueue(active);
-                try
+                if (calls.Count == 1)
                 {
-                    if (calls.Count == 1)
-                    {
-                        firstWriterEntered.SetResult();
-                        await releaseFirstWriter.Task.WaitAsync(cancellationToken);
-                    }
+                    firstWriterEntered.TrySetResult();
+                    await releaseFirstWriter.Task.WaitAsync(cancellationToken);
                 }
-                finally
-                {
-                    Interlocked.Decrement(ref activeWriters);
-                }
-
-                if (calls.Count == 2)
+                else
                 {
                     secondWriteCompleted.TrySetResult();
                 }
-            });
+            },
+            ticks,
+            maxQueuedFrames: 1);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        for (var index = 0; index < 9; index++)
-        {
-            await WriteFrameAsync(client, "HQ111", timeout.Token);
-        }
-
-        var firstWrite = WriteFrameAsync(client, "HQ111", timeout.Token);
+        WriteFrameData(client, "HQ111", timeout.Token);
+        ticks.Release();
         await firstWriterEntered.Task.WaitAsync(timeout.Token);
 
-        for (var index = 0; index < 10; index++)
+        for (var index = 0; index < 20; index++)
         {
-            await WriteFrameAsync(client, "HQ222", timeout.Token);
+            WriteFrameData(client, "HQ222", timeout.Token, (12000 + index).ToString());
         }
 
         releaseFirstWriter.SetResult();
-        await firstWrite;
+        ticks.Release();
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
 
         Assert.Equal(2, calls.Count);
-        Assert.All(activeWriterCounts, count => Assert.Equal(1, count));
-        Assert.All(calls, payload => Assert.Equal(50, payload.Length));
-    }
-
-    [Fact]
-    public async Task WriteFrameAsync_FailedBatch_IsRetriedWithNextBatch()
-    {
-        var calls = new ConcurrentQueue<string[]>();
-        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var attempt = 0;
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
-            (points, _) =>
-            {
-                calls.Enqueue(points.Select(ToLineProtocol).ToArray());
-                if (Interlocked.Increment(ref attempt) == 1)
-                {
-                    throw new InvalidOperationException("InfluxDB unavailable");
-                }
-
-                secondWriteCompleted.TrySetResult();
-                return Task.CompletedTask;
-            });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        for (var index = 0; index < 9; index++)
-        {
-            await WriteFrameAsync(client, "HQ111", CancellationToken.None);
-        }
-
-        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
-
-        for (var index = 0; index < 10; index++)
-        {
-            await WriteFrameAsync(client, "HQ222", CancellationToken.None);
-        }
-
-        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
-        Assert.Equal(2, calls.Count);
-        Assert.Equal(50, calls.ElementAt(0).Length);
-        Assert.Equal(100, calls.ElementAt(1).Length);
-    }
-
-    [Fact]
-    public async Task WriteFrameAsync_FailsAfterNextThreshold_RetriesWithoutWaitingForAnotherEvent()
-    {
-        var calls = new ConcurrentQueue<int>();
-        var firstWriterEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var failFirstWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var attempt = 0;
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
-            async (points, cancellationToken) =>
-            {
-                calls.Enqueue(points.Count);
-                if (Interlocked.Increment(ref attempt) == 1)
-                {
-                    firstWriterEntered.SetResult();
-                    await failFirstWriter.Task.WaitAsync(cancellationToken);
-                    throw new InvalidOperationException("InfluxDB unavailable");
-                }
-
-                secondWriteCompleted.TrySetResult();
-            });
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        for (var index = 0; index < 9; index++)
-        {
-            await WriteFrameAsync(client, "HQ111", timeout.Token);
-        }
-
-        var firstWrite = WriteFrameAsync(client, "HQ111", timeout.Token);
-        await firstWriterEntered.Task.WaitAsync(timeout.Token);
-
-        for (var index = 0; index < 10; index++)
-        {
-            await WriteFrameAsync(client, "HQ222", timeout.Token);
-        }
-
-        failFirstWriter.SetResult();
-        await firstWrite;
-        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
-
-        Assert.Equal([50, 100], calls.ToArray());
-    }
-
-    [Fact]
-    public async Task WriteFrameAsync_BufferLimit_DiscardsOldestCompleteFrames()
-    {
-        var calls = new ConcurrentQueue<string[]>();
-        var writeCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = new MetricsClient(
-            "ve_direct",
-            "collector",
-            (points, _) =>
-            {
-                calls.Enqueue(points.Select(ToLineProtocol).ToArray());
-                writeCompleted.TrySetResult();
-                return Task.CompletedTask;
-            },
-            eventsPerWrite: 2,
-            maxBufferedPoints: 10);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        await WriteFrameAsync(client, "HQ111", CancellationToken.None);
-        await WriteFrameAsync(client, "HQ222", CancellationToken.None);
-        await WriteFrameAsync(client, "HQ333", CancellationToken.None);
-        await WriteFrameAsync(client, "HQ333", CancellationToken.None);
-        await writeCompleted.Task.WaitAsync(timeout.Token);
-
-        var payload = Assert.Single(calls);
-        Assert.Equal(10, payload.Length);
-        Assert.DoesNotContain(payload, line => line.Contains("device=HQ111", StringComparison.Ordinal));
-        Assert.DoesNotContain(payload, line => line.Contains("device=HQ222", StringComparison.Ordinal));
-        Assert.Equal(10, payload.Count(line => line.Contains("device=HQ333", StringComparison.Ordinal)));
+        Assert.Contains(calls.ElementAt(1), line => line.Contains("voltage=12019i", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task Dispose_BlockedWriter_DoesNotWaitForUnderlyingWrite()
     {
+        using var ticks = new SemaphoreSlim(0);
         var writerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var client = new MetricsClient(
-            "ve_direct",
-            "collector",
-            async (_, _) =>
-            {
-                writerEntered.TrySetResult();
-                await releaseWriter.Task;
-            },
-            eventsPerWrite: 1);
-        using var testTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var client = CreateClient(async (_, _) =>
+        {
+            writerEntered.TrySetResult();
+            await releaseWriter.Task;
+        }, ticks);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await WriteFrameAsync(client, "HQ111", testTimeout.Token);
-        await writerEntered.Task.WaitAsync(testTimeout.Token);
+        WriteFrameData(client, "HQ111", timeout.Token);
+        ticks.Release();
+        await writerEntered.Task.WaitAsync(timeout.Token);
 
         var disposeTask = Task.Run(client.Dispose, TestContext.Current.CancellationToken);
         try
@@ -369,16 +324,50 @@ public sealed class MetricsPipelineTests
         }
     }
 
+    private static MetricsClient CreateClient(
+        Func<List<PointData>, CancellationToken, Task> writePoints,
+        SemaphoreSlim? ticks = null,
+        int maxQueuedFrames = 2_000)
+    {
+        return new MetricsClient(
+            "ve_direct",
+            "collector",
+            writePoints,
+            TimeSpan.FromSeconds(10),
+            maxQueuedFrames,
+            waitForNextWrite: ticks is null ? null : ticks.WaitAsync);
+    }
+
     private static string ToLineProtocol(PointData point)
     {
         return point.ToLineProtocol(new PointSettings());
     }
 
-    private static Task WriteFrameAsync(MetricsClient client, string serialNumber, CancellationToken cancellationToken)
+    private static void WriteFrameData(
+        MetricsClient client,
+        string serialNumber,
+        CancellationToken cancellationToken,
+        string voltage = "13000")
     {
-        return client.WriteFrameAsync(
-            "test",
-            new Dictionary<string, string> { ["SER#"] = serialNumber },
-            cancellationToken);
+        client.WriteFrameData("test", Frame(serialNumber, voltage), cancellationToken);
+    }
+
+    private static Dictionary<string, string> Frame(string serialNumber, string voltage)
+    {
+        return new Dictionary<string, string>
+        {
+            ["SER#"] = serialNumber,
+            ["V"] = voltage,
+            ["I"] = "500",
+            ["VPV"] = "40000",
+            ["PPV"] = "200",
+            ["IL"] = "250",
+            ["H20"] = "12",
+            ["H21"] = "210",
+            ["CS"] = "3",
+            ["ERR"] = "0",
+            ["MPPT"] = "2",
+            ["LOAD"] = "ON"
+        };
     }
 }

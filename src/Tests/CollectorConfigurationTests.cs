@@ -7,14 +7,14 @@ using Xunit;
 public sealed class CollectorConfigurationTests
 {
     [Fact]
-    public void InfluxBatchOptions_Defaults_AreEventBased()
+    public void InfluxBatchOptions_Defaults_AreTimeBased()
     {
         var (app, configuration) = CreateConfiguration();
 
         app.Execute(Array.Empty<string>());
 
-        Assert.Equal(10, configuration.InfluxEventsPerWrite);
-        Assert.Equal(10_000, configuration.InfluxMaxBufferedPoints);
+        Assert.Equal(10, configuration.InfluxWriteInterval);
+        Assert.Equal(2_000, configuration.InfluxMaxQueuedFrames);
     }
 
     [Fact]
@@ -22,10 +22,22 @@ public sealed class CollectorConfigurationTests
     {
         var (app, configuration) = CreateConfiguration();
 
-        app.Execute("--influxEventsPerWrite", "25", "--influxMaxBufferedPoints", "5000");
+        app.Execute("--influxWriteInterval", "25", "--influxMaxQueuedFrames", "5000");
 
-        Assert.Equal(25, configuration.InfluxEventsPerWrite);
-        Assert.Equal(5_000, configuration.InfluxMaxBufferedPoints);
+        Assert.Equal(25, configuration.InfluxWriteInterval);
+        Assert.Equal(5_000, configuration.InfluxMaxQueuedFrames);
+    }
+
+    [Fact]
+    public void CalculateMissingMetrics_MFlag_DisablesCalculation()
+    {
+        var (app, configuration) = CreateConfiguration();
+
+        app.Execute(Array.Empty<string>());
+        Assert.True(configuration.CalculateMissingMetrics);
+
+        app.Execute("-m");
+        Assert.False(configuration.CalculateMissingMetrics);
     }
 
     private static (CommandLineApplication App, CollectorConfiguration Configuration) CreateConfiguration()

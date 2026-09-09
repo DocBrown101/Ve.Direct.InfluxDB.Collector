@@ -7,78 +7,94 @@ namespace Ve.Direct.InfluxDB.Collector.Metrics;
 
 internal sealed class MetricsClient : IFrameOutput
 {
-    private const int PointsPerPayload = 5;
-
+    private const int MaxFramesPerBatch = 100;
     private readonly string metricPrefix;
     private readonly string hostName;
     private readonly Func<List<PointData>, CancellationToken, Task> writePointsToDataBase;
     private readonly InfluxDBClient? influxDBClient;
-    private readonly int eventsPerWrite;
-    private readonly int maxBufferedPoints;
+    private readonly Func<CancellationToken, Task> waitForNextWrite;
     private readonly bool calculateMissingMetrics;
     private readonly CancellationTokenSource writerCancellation;
-    private readonly ChannelWriter<DevicePayload> payloadWriter;
+    private readonly ChannelWriter<List<PointData>> payloadWriter;
     private readonly Task writerTask;
-    private bool isDisposed;
+    private int disposeState;
 
     internal MetricsClient(CollectorConfiguration configuration, CancellationToken writerCancellationToken)
+        : this(
+            configuration.InfluxMetricPrefix,
+            Environment.MachineName,
+            CreateDatabaseWriter(configuration),
+            TimeSpan.FromSeconds(configuration.InfluxWriteInterval),
+            configuration.InfluxMaxQueuedFrames,
+            configuration.CalculateMissingMetrics,
+            writerCancellationToken)
     {
-        this.metricPrefix = configuration.InfluxMetricPrefix;
-        this.hostName = Environment.MachineName;
-        this.eventsPerWrite = configuration.InfluxEventsPerWrite;
-        this.maxBufferedPoints = configuration.InfluxMaxBufferedPoints;
-        this.calculateMissingMetrics = configuration.CalculateMissingMetrics;
-        this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
-        this.influxDBClient = new InfluxDBClient(
-            new InfluxDBClientOptions.Builder()
-                .Url(configuration.InfluxDbUrl)
-                .Bucket(configuration.InfluxDbBucket)
-                .Org(configuration.InfluxDbOrg)
-                .Build());
-        var writeApi = this.influxDBClient.GetWriteApiAsync();
-        this.writePointsToDataBase = (points, cancellationToken) => writeApi.WritePointsAsync(
-            points,
-            configuration.InfluxDbBucket,
-            configuration.InfluxDbOrg,
-            cancellationToken);
-        var payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
-        this.payloadWriter = payloadChannel.Writer;
-        this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
     internal MetricsClient(
         string metricPrefix,
         string hostName,
         Func<List<PointData>, CancellationToken, Task> writePoints,
-        int eventsPerWrite = 10,
-        int maxBufferedPoints = 10_000,
-        CancellationToken writerCancellationToken = default)
+        TimeSpan? writeInterval = null,
+        int maxQueuedFrames = 2_000,
+        bool calculateMissingMetrics = true,
+        CancellationToken writerCancellationToken = default,
+        Func<CancellationToken, Task>? waitForNextWrite = null)
+        : this(
+            metricPrefix,
+            hostName,
+            new DatabaseWriter(null, writePoints),
+            writeInterval ?? TimeSpan.FromSeconds(10),
+            maxQueuedFrames,
+            calculateMissingMetrics,
+            writerCancellationToken,
+            waitForNextWrite)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(eventsPerWrite, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxBufferedPoints, 5);
+    }
+
+    private MetricsClient(
+        string metricPrefix,
+        string hostName,
+        DatabaseWriter databaseWriter,
+        TimeSpan writeInterval,
+        int maxQueuedFrames,
+        bool calculateMissingMetrics,
+        CancellationToken writerCancellationToken,
+        Func<CancellationToken, Task>? waitForNextWrite = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(writeInterval, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxQueuedFrames, 1);
 
         this.metricPrefix = metricPrefix;
         this.hostName = hostName;
-        this.writePointsToDataBase = writePoints;
-        this.eventsPerWrite = eventsPerWrite;
-        this.maxBufferedPoints = maxBufferedPoints;
+        this.writePointsToDataBase = databaseWriter.WritePoints;
+        this.influxDBClient = databaseWriter.Client;
+        this.waitForNextWrite = waitForNextWrite ?? (token => Task.Delay(writeInterval, token));
+        this.calculateMissingMetrics = calculateMissingMetrics;
         this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
-        var payloadChannel = CreatePayloadChannel(this.maxBufferedPoints);
+        var payloadChannel = Channel.CreateBounded<List<PointData>>(new BoundedChannelOptions(maxQueuedFrames)
+        {
+            AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
         this.payloadWriter = payloadChannel.Writer;
         this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
 
-    public async Task WriteFrameAsync(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
+    public void WriteFrameData(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
         try
         {
             var metrics = MetricsCompositor.ComposeMetrics(frame, this.calculateMissingMetrics);
             ConsoleLogger.Debug($"Received metrics for device {metrics.SerialNumber} on {portName}.");
             ct.ThrowIfCancellationRequested();
-            var payload = new DevicePayload(
-                metrics.SerialNumber,
-                this.CreatePayload(metrics, DateTime.UtcNow));
-            await this.payloadWriter.WriteAsync(payload, ct).ConfigureAwait(false);
+            var payload = this.CreatePayload(metrics, DateTime.UtcNow);
+            if (payload.Count > 0 && !this.payloadWriter.TryWrite(payload))
+            {
+                throw new ObjectDisposedException(nameof(MetricsClient));
+            }
         }
         catch (ArgumentException exception)
         {
@@ -96,12 +112,11 @@ internal sealed class MetricsClient : IFrameOutput
 
     public void Dispose()
     {
-        if (this.isDisposed)
+        if (Interlocked.Exchange(ref this.disposeState, 1) != 0)
         {
             return;
         }
 
-        this.isDisposed = true;
         this.payloadWriter.TryComplete();
         this.writerCancellation.Cancel();
         try
@@ -117,110 +132,117 @@ internal sealed class MetricsClient : IFrameOutput
 
     internal List<PointData> CreatePayload(MetricsTransmissionModel metrics, DateTime timestamp)
     {
-        return
-        [
-            this.AddTags(PointData.Measurement($"{this.metricPrefix}_battery"), metrics)
-                .Field("voltage", metrics.BatteryVoltageMillivolts)
-                .Field("current", metrics.BatteryCurrentMilliamps)
-                .Field("power", metrics.CalculatedBatteryPowerMilliwatts)
-                .Timestamp(timestamp, WritePrecision.Ms),
-            this.AddTags(PointData.Measurement($"{this.metricPrefix}_panel"), metrics)
-                .Field("voltage", metrics.PanelVoltageMillivolts)
-                .Field("current", metrics.CalculatedPanelCurrentMilliamps)
-                .Field("power", metrics.PanelPowerWatts)
-                .Timestamp(timestamp, WritePrecision.Ms),
-            this.AddTags(PointData.Measurement($"{this.metricPrefix}_load"), metrics)
-                .Field("current", metrics.LoadCurrentMilliamps)
-                .Field("power", metrics.CalculatedLoadPowerMilliwatts)
-                .Field("Status", metrics.LoadState)
-                .Timestamp(timestamp, WritePrecision.Ms),
-            this.AddTags(PointData.Measurement($"{this.metricPrefix}_today"), metrics)
-                .Field("yield", metrics.TodayYieldWattHours)
-                .Field("power", metrics.TodayMaximumPowerWatts)
-                .Timestamp(timestamp, WritePrecision.Ms),
-            this.AddTags(PointData.Measurement($"{this.metricPrefix}_VICTRON"), metrics)
-                .Field("CS_Status", metrics.ChargerState)
-                .Field("ERR_Status", metrics.ErrorCode)
-                .Field("MPPT_Status", metrics.TrackerState)
-                .Timestamp(timestamp, WritePrecision.Ms)
-        ];
+        var points = new List<PointData>(5);
+        this.AddMeasurement(points, "battery", metrics, timestamp,
+            ("voltage", metrics.BatteryVoltageMillivolts),
+            ("current", metrics.BatteryCurrentMilliamps),
+            ("power", metrics.CalculatedBatteryPowerMilliwatts));
+        this.AddMeasurement(points, "panel", metrics, timestamp,
+            ("voltage", metrics.PanelVoltageMillivolts),
+            ("current", metrics.CalculatedPanelCurrentMilliamps),
+            ("power", metrics.PanelPowerWatts));
+        this.AddMeasurement(points, "load", metrics, timestamp,
+            ("current", metrics.LoadCurrentMilliamps),
+            ("power", metrics.CalculatedLoadPowerMilliwatts),
+            ("Status", metrics.LoadState));
+        this.AddMeasurement(points, "today", metrics, timestamp,
+            ("yield", metrics.TodayYieldWattHours),
+            ("power", metrics.TodayMaximumPowerWatts));
+        this.AddMeasurement(points, "VICTRON", metrics, timestamp,
+            ("CS_Status", metrics.ChargerState),
+            ("ERR_Status", metrics.ErrorCode),
+            ("MPPT_Status", metrics.TrackerState));
+        return points;
     }
 
-    private PointData AddTags(PointData point, MetricsTransmissionModel metrics)
+    private static DatabaseWriter CreateDatabaseWriter(CollectorConfiguration configuration)
     {
-        return point
+        var client = new InfluxDBClient(
+            new InfluxDBClientOptions.Builder()
+                .Url(configuration.InfluxDbUrl)
+                .Bucket(configuration.InfluxDbBucket)
+                .Org(configuration.InfluxDbOrg)
+                .Build());
+        var writeApi = client.GetWriteApiAsync();
+        return new DatabaseWriter(
+            client,
+            (points, cancellationToken) => writeApi.WritePointsAsync(
+                points,
+                configuration.InfluxDbBucket,
+                configuration.InfluxDbOrg,
+                cancellationToken));
+    }
+
+    private void AddMeasurement(
+        List<PointData> points,
+        string measurement,
+        MetricsTransmissionModel metrics,
+        DateTime timestamp,
+        params (string Name, long? Value)[] fields)
+    {
+        var point = PointData.Measurement($"{this.metricPrefix}_{measurement}")
             .Tag("host", this.hostName)
             .Tag("device", metrics.SerialNumber);
-    }
-
-    private static Channel<DevicePayload> CreatePayloadChannel(int maxBufferedPoints)
-    {
-        return Channel.CreateBounded<DevicePayload>(new BoundedChannelOptions(
-            Math.Max(1, maxBufferedPoints / PointsPerPayload))
+        foreach (var (name, value) in fields)
         {
-            AllowSynchronousContinuations = false,
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false
-        });
-    }
+            if (value is not null)
+            {
+                point = point.Field(name, value.Value);
+            }
+        }
 
-    private async Task ConsumePayloadsAsync(ChannelReader<DevicePayload> payloadReader)
-    {
-        var deviceEventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var pendingPayloads = new Queue<DevicePayload>();
-        var bufferedPointCount = 0;
-
-        await foreach (var payload in payloadReader.ReadAllAsync().ConfigureAwait(false))
+        if (point.HasFields())
         {
-            pendingPayloads.Enqueue(payload);
-            bufferedPointCount += payload.Points.Count;
-            this.TrimBuffer(pendingPayloads, ref bufferedPointCount);
-
-            deviceEventCounts.TryGetValue(payload.SerialNumber, out var eventCount);
-            deviceEventCounts[payload.SerialNumber] = ++eventCount;
-            if (eventCount < this.eventsPerWrite)
-            {
-                continue;
-            }
-
-            deviceEventCounts.Clear();
-            try
-            {
-                var points = pendingPayloads.SelectMany(payload => payload.Points).ToList();
-                await this.writePointsToDataBase(points, this.writerCancellation.Token)
-                    .WaitAsync(this.writerCancellation.Token)
-                    .ConfigureAwait(false);
-                pendingPayloads.Clear();
-                bufferedPointCount = 0;
-                ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
-            }
-            catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                ConsoleLogger.Error(exception);
-            }
+            points.Add(point.Timestamp(timestamp, WritePrecision.Ms));
         }
     }
 
-    private void TrimBuffer(Queue<DevicePayload> pendingPayloads, ref int bufferedPointCount)
+    private async Task ConsumePayloadsAsync(ChannelReader<List<PointData>> payloadReader)
     {
-        var droppedPoints = 0;
-        while (bufferedPointCount > this.maxBufferedPoints
-               && pendingPayloads.TryDequeue(out var droppedPayload))
+        var batch = new List<List<PointData>>(MaxFramesPerBatch);
+        try
         {
-            droppedPoints += droppedPayload.Points.Count;
-            bufferedPointCount -= droppedPayload.Points.Count;
-        }
+            while (true)
+            {
+                await this.waitForNextWrite(this.writerCancellation.Token).ConfigureAwait(false);
+                if (batch.Count == 0)
+                {
+                    while (batch.Count < MaxFramesPerBatch && payloadReader.TryRead(out var payload))
+                    {
+                        batch.Add(payload);
+                    }
+                }
 
-        if (droppedPoints > 0)
+                if (batch.Count == 0)
+                {
+                    continue;
+                }
+
+                var points = batch.SelectMany(payload => payload).ToList();
+                try
+                {
+                    await this.writePointsToDataBase(points, this.writerCancellation.Token)
+                        .WaitAsync(this.writerCancellation.Token)
+                        .ConfigureAwait(false);
+                    batch.Clear();
+                    ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
+                }
+                catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    ConsoleLogger.Error(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
         {
-            ConsoleLogger.Warning($"InfluxDB buffer limit reached: {droppedPoints} oldest points were discarded.");
         }
     }
 
-    private sealed record DevicePayload(string SerialNumber, List<PointData> Points);
+    private sealed record DatabaseWriter(
+        InfluxDBClient? Client,
+        Func<List<PointData>, CancellationToken, Task> WritePoints);
 }

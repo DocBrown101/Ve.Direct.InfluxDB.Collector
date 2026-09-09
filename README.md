@@ -41,13 +41,13 @@ host=<collector-host>
 device=<VE.Direct SER#>
 ```
 
-VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning in both backends. Complete frame payloads from all devices share one thread-safe InfluxDB buffer.
+VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning in both backends. Complete frame payloads from all devices share one bounded InfluxDB queue.
 
 ## InfluxDB Batching
 
-InfluxDB writes are triggered by incoming frames rather than a timer. The default threshold is ten frames from one device. As soon as the first device reaches that threshold, all points currently buffered for every device are written in one request and all device counters start a new round.
+InfluxDB writes run every ten seconds by default. Each request contains at most 100 complete frames. Frames received while a request is running remain in the queue for a later request.
 
-Change the threshold with `--influxEventsPerWrite`. The shared buffer holds at most 10,000 pending points by default; `--influxMaxBufferedPoints` changes that limit. If the limit is reached, the oldest complete frames are discarded. A failed write is returned to the front of the buffer and retried with a later batch. Pending points may be discarded when the application stops.
+Change the interval with `--influxWriteInterval`. The queue holds at most 2,000 complete frames by default; `--influxMaxQueuedFrames` changes that limit. If the queue is full, the oldest queued frame is discarded without blocking serial-port readers. A failed batch is retried unchanged at the next interval. Pending frames may be discarded when the application stops.
 
 ## Auto-Discovery
 
@@ -79,8 +79,8 @@ Run with InfluxDB output:
   --influxDbUrl http://localhost:8086 \
   --influxDbBucket solar \
   --influxDbOrg home \
-  --influxEventsPerWrite 10 \
-  --influxMaxBufferedPoints 10000
+  --influxWriteInterval 10 \
+  --influxMaxQueuedFrames 2000
 ```
 
 To use a three-second discovery interval, add `--scan-interval 3`.
