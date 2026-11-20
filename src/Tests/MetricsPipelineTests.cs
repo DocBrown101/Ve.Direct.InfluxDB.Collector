@@ -1,6 +1,7 @@
 namespace Tests;
 
 using System.Collections.Concurrent;
+using InfluxDB.Client.Core.Exceptions;
 using InfluxDB.Client.Writes;
 using Ve.Direct.InfluxDB.Collector.Metrics;
 using Xunit;
@@ -97,10 +98,10 @@ public sealed class MetricsPipelineTests
     public async Task WriteFrameData_InvalidThenValidFrame_WritesValidFrameOnNextInterval()
     {
         using var ticks = new SemaphoreSlim(0);
-        var writeCompleted = new TaskCompletionSource<List<PointData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writeCompleted = new TaskCompletionSource<PointData[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = CreateClient((points, _) =>
         {
-            writeCompleted.TrySetResult(points);
+            writeCompleted.TrySetResult(points.ToArray());
             return Task.CompletedTask;
         }, ticks);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -123,10 +124,10 @@ public sealed class MetricsPipelineTests
     public async Task TestConstructor_DefaultsToProductionMetricCalculation()
     {
         using var ticks = new SemaphoreSlim(0);
-        var writeCompleted = new TaskCompletionSource<List<PointData>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writeCompleted = new TaskCompletionSource<PointData[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = CreateClient((points, _) =>
         {
-            writeCompleted.TrySetResult(points);
+            writeCompleted.TrySetResult(points.ToArray());
             return Task.CompletedTask;
         }, ticks);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -219,6 +220,38 @@ public sealed class MetricsPipelineTests
         Assert.Equal(3, calls.Count);
         Assert.Equal(calls.ElementAt(0), calls.ElementAt(1));
         Assert.All(calls.ElementAt(2), line => Assert.Contains("device=HQ222", line, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Writer_RejectedBatch_IsSkippedWithoutWaitingForNextInterval()
+    {
+        using var ticks = new SemaphoreSlim(0);
+        var firstWriteStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextBatch = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writeAttempts = 0;
+        using var client = CreateClient((points, _) =>
+        {
+            if (++writeAttempts == 1)
+            {
+                firstWriteStarted.SetResult();
+                return firstWrite.Task;
+            }
+
+            nextBatch.TrySetResult(points.Select(ToLineProtocol).ToArray());
+            return Task.CompletedTask;
+        }, ticks);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        WriteFrameData(client, "HQ111", timeout.Token);
+        ticks.Release();
+        await firstWriteStarted.Task.WaitAsync(timeout.Token);
+        WriteFrameData(client, "HQ222", timeout.Token);
+        firstWrite.SetException(new UnprocessableEntityException("field type conflict"));
+
+        var written = await nextBatch.Task.WaitAsync(timeout.Token);
+        Assert.Equal(5, written.Length);
+        Assert.All(written, line => Assert.Contains("device=HQ222", line, StringComparison.Ordinal));
     }
 
     [Fact]

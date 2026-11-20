@@ -47,7 +47,9 @@ VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning
 
 The writer waits ten seconds by default before draining the queue. Each request contains at most 100 complete frames; the writer sends as many requests as needed to catch up without waiting between successful requests.
 
-Change the interval with `--influxWriteInterval`. A failed batch is retried unchanged after the interval. Serial-port readers do not wait for the writer, and frames are not dropped due to backlog. The queue has no frame limit and is held in RAM, so it can grow during a long database outage or sustained overload. Pending frames are not persisted across shutdown. Remove `--influxMaxQueuedFrames` from existing commands; it is no longer supported.
+Change the interval with `--influxWriteInterval`. A failed batch is retried unchanged after the interval unless the server returns HTTP `422`. In that case, the writer logs the rejection and sends the next batch immediately. Any points the server already accepted are unaffected; rejected points are not retried.
+
+Serial-port readers do not wait for the writer, and frames are not dropped due to backlog. The queue has no frame limit and is held in RAM, so it can grow during a long database outage or sustained overload. Pending frames are not persisted across shutdown. Remove `--influxMaxQueuedFrames` from existing commands; it is no longer supported.
 
 ## Auto-Discovery
 

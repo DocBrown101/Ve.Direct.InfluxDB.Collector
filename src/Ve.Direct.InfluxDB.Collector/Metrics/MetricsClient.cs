@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using InfluxDB.Client;
 using InfluxDB.Client.Api.Domain;
+using InfluxDB.Client.Core.Exceptions;
 using InfluxDB.Client.Writes;
 
 namespace Ve.Direct.InfluxDB.Collector.Metrics;
@@ -212,13 +213,18 @@ internal sealed class MetricsClient : IFrameOutput
                     {
                         await this.writePointsToDataBase(batch, ct).WaitAsync(ct).ConfigureAwait(false);
                         ConsoleLogger.Debug($"InfluxDB write completed: {batch.Count} points sent.");
-                        batch = [];
+                    }
+                    catch (UnprocessableEntityException exception)
+                    {
+                        ConsoleLogger.Error($"InfluxDB rejected a batch of {batch.Count} points (HTTP 422); skipping retry: {exception.Message}");
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
                     {
                         ConsoleLogger.Error(exception);
                         break;
                     }
+
+                    batch.Clear();
                 }
             }
         }
