@@ -199,7 +199,7 @@ internal sealed class MetricsClient : IFrameOutput
 
     private async Task ConsumePayloadsAsync(ChannelReader<List<PointData>> payloadReader)
     {
-        var batch = new List<List<PointData>>(MaxFramesPerBatch);
+        List<PointData> batch = [];
         try
         {
             while (true)
@@ -207,9 +207,9 @@ internal sealed class MetricsClient : IFrameOutput
                 await this.waitForNextWrite(this.writerCancellation.Token).ConfigureAwait(false);
                 if (batch.Count == 0)
                 {
-                    while (batch.Count < MaxFramesPerBatch && payloadReader.TryRead(out var payload))
+                    for (var frames = 0; frames < MaxFramesPerBatch && payloadReader.TryRead(out var payload); frames++)
                     {
-                        batch.Add(payload);
+                        batch.AddRange(payload);
                     }
                 }
 
@@ -218,14 +218,13 @@ internal sealed class MetricsClient : IFrameOutput
                     continue;
                 }
 
-                var points = batch.SelectMany(payload => payload).ToList();
                 try
                 {
-                    await this.writePointsToDataBase(points, this.writerCancellation.Token)
+                    await this.writePointsToDataBase(batch, this.writerCancellation.Token)
                         .WaitAsync(this.writerCancellation.Token)
                         .ConfigureAwait(false);
-                    batch.Clear();
-                    ConsoleLogger.Debug($"InfluxDB write completed: {points.Count} points sent.");
+                    ConsoleLogger.Debug($"InfluxDB write completed: {batch.Count} points sent.");
+                    batch = [];
                 }
                 catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
                 {

@@ -97,7 +97,7 @@ internal sealed class VEDirectPortMonitor
         {
             await this.serialPorts.ReadAsync(
                 reader.PortName,
-                (frame, token) => this.HandleFrameAsync(reader, frame, token),
+                (frame, token) => this.HandleFrame(reader, frame, token),
                 ct).ConfigureAwait(false);
 
             if (!ct.IsCancellationRequested)
@@ -119,7 +119,7 @@ internal sealed class VEDirectPortMonitor
         }
     }
 
-    private async Task HandleFrameAsync(ReaderState reader, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
+    private void HandleFrame(ReaderState reader, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
         if (!frame.TryGetValue("SER#", out var serialNumber) || string.IsNullOrWhiteSpace(serialNumber))
         {
@@ -150,7 +150,7 @@ internal sealed class VEDirectPortMonitor
             && StringComparer.Ordinal.Equals(owner, reader.PortName))
         {
             reader.LastDuplicateSerialNumber = null;
-            await this.ProcessFrameAsync(reader.PortName, frame, ct).ConfigureAwait(false);
+            this.ProcessFrame(reader.PortName, frame, ct);
             return;
         }
 
@@ -164,7 +164,7 @@ internal sealed class VEDirectPortMonitor
             $"Duplicate VE.Direct device {serialNumber} detected on {owner} and {reader.PortName}; {reader.PortName} is suppressed.");
     }
 
-    private async Task ProcessFrameAsync(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
+    private void ProcessFrame(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct)
     {
         try
         {

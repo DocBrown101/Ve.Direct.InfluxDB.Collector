@@ -17,5 +17,5 @@ internal sealed class PortSource(Func<string[]> getPortNames, ReadPort readPort)
 
 internal delegate Task ReadPort(
         string portName,
-        Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
+        Action<IReadOnlyDictionary<string, string>, CancellationToken> processFrame,
         CancellationToken ct);

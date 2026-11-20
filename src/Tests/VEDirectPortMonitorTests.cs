@@ -15,8 +15,8 @@ public sealed class VEDirectPortMonitorTests
             () => ["/dev/ttyUSB0"],
             async (port, callback, cancellationToken) =>
             {
-                await callback(Frame(null, "13000"), cancellationToken);
-                await callback(Frame("HQ111", "12900"), cancellationToken);
+                callback(Frame(null, "13000"), cancellationToken);
+                callback(Frame("HQ111", "12900"), cancellationToken);
                 validFrameSent.SetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             },
@@ -42,7 +42,7 @@ public sealed class VEDirectPortMonitorTests
             () => Volatile.Read(ref ports),
             async (port, callback, cancellationToken) =>
             {
-                await callback(Frame("HQ111", "13000"), cancellationToken);
+                callback(Frame("HQ111", "13000"), cancellationToken);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             },
             (port, data, _) =>
@@ -87,7 +87,7 @@ public sealed class VEDirectPortMonitorTests
 
                 for (var index = 0; index < 3; index++)
                 {
-                    await callback(Frame("HQ222", (12500 + index).ToString()), cancellationToken);
+                    callback(Frame("HQ222", (12500 + index).ToString()), cancellationToken);
                 }
                 healthyReaderCompleted.SetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -116,7 +116,7 @@ public sealed class VEDirectPortMonitorTests
                     throw new IOException("Simulated disconnect");
                 }
 
-                await callback(Frame("HQ111", "13000"), cancellationToken);
+                callback(Frame("HQ111", "13000"), cancellationToken);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             },
             (_, data, _) =>
@@ -141,8 +141,8 @@ public sealed class VEDirectPortMonitorTests
             async (_, callback, cancellationToken) =>
             {
                 Interlocked.Increment(ref readerStarts);
-                await callback(Frame("HQ111", "13000"), cancellationToken);
-                await callback(Frame("HQ111", "12900"), cancellationToken);
+                callback(Frame("HQ111", "13000"), cancellationToken);
+                callback(Frame("HQ111", "12900"), cancellationToken);
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             },
             (_, _, _) =>
@@ -161,8 +161,10 @@ public sealed class VEDirectPortMonitorTests
         Assert.Equal(2, processedFrames);
     }
 
-    [Fact]
-    public async Task MonitorPortsAsync_DuplicateSerial_FirstOwnerWinsAndReplacementTakesOverAfterDisconnect()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MonitorPortsAsync_DuplicateSerial_TakesOverAfterRemovalOrReadTimeout(bool oldPortStaysConnected)
     {
         string[] ports = ["/dev/ttyUSB9", "/dev/ttyUSB0"];
         var ownerReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -175,8 +177,16 @@ public sealed class VEDirectPortMonitorTests
             {
                 if (port.EndsWith('9'))
                 {
-                    await callback(Frame("HQ111", "13000"), cancellationToken);
-                    ownerReady.SetResult();
+                    if (!ownerReady.Task.IsCompleted)
+                    {
+                        callback(Frame("HQ111", "13000"), cancellationToken);
+                        ownerReady.SetResult();
+                        if (oldPortStaysConnected)
+                        {
+                            await duplicateReported.Task.WaitAsync(cancellationToken);
+                            throw new TimeoutException("No data on the old port.");
+                        }
+                    }
                     await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                     return;
                 }
@@ -184,7 +194,7 @@ public sealed class VEDirectPortMonitorTests
                 await ownerReady.Task.WaitAsync(cancellationToken);
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    await callback(Frame("HQ111", "12500"), cancellationToken);
+                    callback(Frame("HQ111", "12500"), cancellationToken);
                     duplicateReported.TrySetResult();
                     if (takeover.Task.IsCompleted)
                     {
@@ -205,8 +215,11 @@ public sealed class VEDirectPortMonitorTests
         await RunUntilAsync(monitor, async token =>
         {
             await duplicateReported.Task.WaitAsync(token);
-            Assert.Equal(["/dev/ttyUSB9"], published.ToArray());
-            Volatile.Write(ref ports, ["/dev/ttyUSB0"]);
+            if (!oldPortStaysConnected)
+            {
+                Assert.Equal(["/dev/ttyUSB9"], published.ToArray());
+                Volatile.Write(ref ports, ["/dev/ttyUSB0"]);
+            }
             await takeover.Task.WaitAsync(token);
         });
 

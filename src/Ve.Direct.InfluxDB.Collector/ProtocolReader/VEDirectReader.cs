@@ -1,15 +1,19 @@
 using System.Collections.ObjectModel;
 using System.IO.Ports;
+using System.Text;
 
 namespace Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 internal sealed class VEDirectReader(string serialPortName)
 {
+    private const int MaxFrameBytes = 4096;
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(5);
     private readonly Dictionary<string, string> currentFrame = [];
-    private ReadState state = ReadState.WaitHeader;
+    private readonly StringBuilder field = new();
+    private ReadState state = ReadState.SeekHeader;
+    private int frameLength;
     private byte checksumSum;
     private string currentKey = string.Empty;
-    private string currentValue = string.Empty;
 
     internal IReadOnlyDictionary<string, string> LastFrame { get; private set; }
         = new ReadOnlyDictionary<string, string>(new Dictionary<string, string>());
@@ -29,42 +33,56 @@ internal sealed class VEDirectReader(string serialPortName)
         {
             if (character == '\n')
             {
-                this.state = ReadState.WaitHeader;
+                this.state = ReadState.SeekHeader;
             }
 
             return false;
         }
 
+        if (this.frameLength == MaxFrameBytes
+            || (this.state == ReadState.InKey && character is '\r' or '\n')
+            || (this.state == ReadState.WaitHeader && character != '\n'))
+        {
+            this.ResetFrame();
+        }
+
+        if (this.state == ReadState.SeekHeader && character != '\r')
+        {
+            return false;
+        }
+
+        this.frameLength++;
         this.checksumSum += inputByte;
         switch (this.state)
         {
+            case ReadState.SeekHeader:
+                this.state = ReadState.WaitHeader;
+                break;
             case ReadState.WaitHeader:
-                if (character == '\n')
-                {
-                    this.state = ReadState.InKey;
-                }
+                this.state = ReadState.InKey;
                 break;
             case ReadState.InKey:
                 if (character == '\t')
                 {
+                    this.currentKey = this.field.ToString();
+                    this.field.Clear();
                     this.state = this.currentKey == "Checksum" ? ReadState.InChecksum : ReadState.InValue;
                 }
                 else
                 {
-                    this.currentKey += character;
+                    this.field.Append(character);
                 }
                 break;
             case ReadState.InValue:
                 if (character == '\r')
                 {
-                    this.currentFrame[this.currentKey] = this.currentValue;
-                    this.currentKey = string.Empty;
-                    this.currentValue = string.Empty;
+                    this.currentFrame[this.currentKey] = this.field.ToString();
+                    this.field.Clear();
                     this.state = ReadState.WaitHeader;
                 }
                 else
                 {
-                    this.currentValue += character;
+                    this.field.Append(character);
                 }
                 break;
             case ReadState.InChecksum:
@@ -88,7 +106,7 @@ internal sealed class VEDirectReader(string serialPortName)
     }
 
     internal async Task ReadFramesUntilDisconnectedAsync(
-        Func<IReadOnlyDictionary<string, string>, CancellationToken, Task> processFrame,
+        Action<IReadOnlyDictionary<string, string>, CancellationToken> processFrame,
         CancellationToken cancellationToken)
     {
         using var serialPort = new SerialPort(serialPortName, 19200);
@@ -98,21 +116,25 @@ internal sealed class VEDirectReader(string serialPortName)
             using var cancellationRegistration = cancellationToken.Register(serialPort.Dispose);
             serialPort.Open();
             ConsoleLogger.Info($"Opened serial port {serialPortName}.");
-            var buffer = new byte[1];
+            var buffer = new byte[256];
 
             while (!cancellationToken.IsCancellationRequested)
             {
                 var bytesRead = await serialPort.BaseStream
-                    .ReadAsync(buffer.AsMemory(0, 1), cancellationToken)
+                    .ReadAsync(buffer.AsMemory(), cancellationToken).AsTask()
+                    .WaitAsync(ReadTimeout, cancellationToken)
                     .ConfigureAwait(false);
                 if (bytesRead == 0)
                 {
                     throw new IOException($"Serial port {serialPortName} was disconnected.");
                 }
 
-                if (this.ProcessInputByte(buffer[0]))
+                for (var index = 0; index < bytesRead; index++)
                 {
-                    await processFrame(this.LastFrame, cancellationToken).ConfigureAwait(false);
+                    if (this.ProcessInputByte(buffer[index]))
+                    {
+                        processFrame(this.LastFrame, cancellationToken);
+                    }
                 }
             }
         }
@@ -125,15 +147,17 @@ internal sealed class VEDirectReader(string serialPortName)
     private void ResetFrame()
     {
         this.currentFrame.Clear();
+        this.field.Clear();
+        this.frameLength = 0;
         this.checksumSum = 0;
         this.currentKey = string.Empty;
-        this.currentValue = string.Empty;
-        this.state = ReadState.WaitHeader;
+        this.state = ReadState.SeekHeader;
     }
 
     private enum ReadState
     {
         Hex,
+        SeekHeader,
         WaitHeader,
         InKey,
         InValue,

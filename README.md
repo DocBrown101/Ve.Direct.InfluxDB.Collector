@@ -63,6 +63,8 @@ Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-disco
 - New ports are opened during the next scan.
 - Removed ports are stopped without affecting other readers.
 - Open and read failures are isolated to the affected port and retried.
+- After five seconds without incoming bytes, the reader releases its device identity and reconnects, even if the USB adapter is still plugged in.
+- The parser discards frames larger than 4 KiB and resynchronizes on subsequent VE.Direct data.
 - Shutdown stops all readers and then disposes the selected output.
 
 Frames without a non-empty `SER#` are discarded. A warning is logged once per affected port until a valid serial number is received.

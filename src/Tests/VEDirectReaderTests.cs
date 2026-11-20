@@ -78,6 +78,19 @@ public sealed class VEDirectReaderTests
     }
 
     [Fact]
+    public void ProcessInputByte_OversizedFrameAndForeignData_RecoversAtNextFrame()
+    {
+        var reader = new VEDirectReader("TESTPORT");
+        var oversized = BuildMessage(("SER#", "STALE"), ("V", new string('1', 10000)));
+        Assert.False(Feed(reader, oversized));
+        Feed(reader, Encoding.ASCII.GetBytes("\r\n" + new string('x', 10000) + "\r\nforeign text\n"));
+
+        Assert.True(Feed(reader, BuildMessage(("SER#", "HQ111"), ("I", "42"))));
+        Assert.Equal("HQ111", reader.LastFrame["SER#"]);
+        Assert.False(reader.LastFrame.ContainsKey("V"));
+    }
+
+    [Fact]
     public void ProcessInputByte_TwoInterleavedReaders_KeepIndependentState()
     {
         var firstReader = new VEDirectReader("/dev/ttyUSB0");
