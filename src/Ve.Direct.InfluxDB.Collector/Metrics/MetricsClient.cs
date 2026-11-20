@@ -25,7 +25,6 @@ internal sealed class MetricsClient : IFrameOutput
             Environment.MachineName,
             CreateDatabaseWriter(configuration),
             TimeSpan.FromSeconds(configuration.InfluxWriteInterval),
-            configuration.InfluxMaxQueuedFrames,
             configuration.CalculateMissingMetrics,
             writerCancellationToken)
     {
@@ -36,7 +35,6 @@ internal sealed class MetricsClient : IFrameOutput
         string hostName,
         Func<List<PointData>, CancellationToken, Task> writePoints,
         TimeSpan? writeInterval = null,
-        int maxQueuedFrames = 2_000,
         bool calculateMissingMetrics = true,
         CancellationToken writerCancellationToken = default,
         Func<CancellationToken, Task>? waitForNextWrite = null)
@@ -45,7 +43,6 @@ internal sealed class MetricsClient : IFrameOutput
             hostName,
             new DatabaseWriter(null, writePoints),
             writeInterval ?? TimeSpan.FromSeconds(10),
-            maxQueuedFrames,
             calculateMissingMetrics,
             writerCancellationToken,
             waitForNextWrite)
@@ -57,13 +54,11 @@ internal sealed class MetricsClient : IFrameOutput
         string hostName,
         DatabaseWriter databaseWriter,
         TimeSpan writeInterval,
-        int maxQueuedFrames,
         bool calculateMissingMetrics,
         CancellationToken writerCancellationToken,
         Func<CancellationToken, Task>? waitForNextWrite = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(writeInterval, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfLessThan(maxQueuedFrames, 1);
 
         this.metricPrefix = metricPrefix;
         this.hostName = hostName;
@@ -72,13 +67,8 @@ internal sealed class MetricsClient : IFrameOutput
         this.waitForNextWrite = waitForNextWrite ?? (token => Task.Delay(writeInterval, token));
         this.calculateMissingMetrics = calculateMissingMetrics;
         this.writerCancellation = CancellationTokenSource.CreateLinkedTokenSource(writerCancellationToken);
-        var payloadChannel = Channel.CreateBounded<List<PointData>>(new BoundedChannelOptions(maxQueuedFrames)
-        {
-            AllowSynchronousContinuations = false,
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-            SingleWriter = false
-        });
+        // shortcut: backlog lives in RAM; use a disk spool if it must survive long outages or restarts.
+        var payloadChannel = Channel.CreateUnbounded<List<PointData>>(new UnboundedChannelOptions { SingleReader = true });
         this.payloadWriter = payloadChannel.Writer;
         this.writerTask = this.ConsumePayloadsAsync(payloadChannel.Reader);
     }
@@ -166,11 +156,7 @@ internal sealed class MetricsClient : IFrameOutput
         var writeApi = client.GetWriteApiAsync();
         return new DatabaseWriter(
             client,
-            (points, cancellationToken) => writeApi.WritePointsAsync(
-                points,
-                configuration.InfluxDbBucket,
-                configuration.InfluxDbOrg,
-                cancellationToken));
+            (points, cancellationToken) => writeApi.WritePointsAsync(points, cancellationToken: cancellationToken));
     }
 
     private void AddMeasurement(
@@ -199,44 +185,44 @@ internal sealed class MetricsClient : IFrameOutput
 
     private async Task ConsumePayloadsAsync(ChannelReader<List<PointData>> payloadReader)
     {
+        var ct = this.writerCancellation.Token;
         List<PointData> batch = [];
         try
         {
             while (true)
             {
-                await this.waitForNextWrite(this.writerCancellation.Token).ConfigureAwait(false);
-                if (batch.Count == 0)
+                await this.waitForNextWrite(ct).ConfigureAwait(false);
+                while (true)
                 {
-                    for (var frames = 0; frames < MaxFramesPerBatch && payloadReader.TryRead(out var payload); frames++)
+                    ct.ThrowIfCancellationRequested();
+                    if (batch.Count == 0)
                     {
-                        batch.AddRange(payload);
+                        for (var frames = 0; frames < MaxFramesPerBatch && payloadReader.TryRead(out var payload); frames++)
+                        {
+                            batch.AddRange(payload);
+                        }
                     }
-                }
 
-                if (batch.Count == 0)
-                {
-                    continue;
-                }
+                    if (batch.Count == 0)
+                    {
+                        break;
+                    }
 
-                try
-                {
-                    await this.writePointsToDataBase(batch, this.writerCancellation.Token)
-                        .WaitAsync(this.writerCancellation.Token)
-                        .ConfigureAwait(false);
-                    ConsoleLogger.Debug($"InfluxDB write completed: {batch.Count} points sent.");
-                    batch = [];
-                }
-                catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception exception)
-                {
-                    ConsoleLogger.Error(exception);
+                    try
+                    {
+                        await this.writePointsToDataBase(batch, ct).WaitAsync(ct).ConfigureAwait(false);
+                        ConsoleLogger.Debug($"InfluxDB write completed: {batch.Count} points sent.");
+                        batch = [];
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        ConsoleLogger.Error(exception);
+                        break;
+                    }
                 }
             }
         }
-        catch (OperationCanceledException) when (this.writerCancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
         }
     }

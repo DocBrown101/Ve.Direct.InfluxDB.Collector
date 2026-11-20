@@ -22,7 +22,7 @@ Ve.Direct.InfluxDB.Collector reads the Victron VE.Direct text protocol and write
 
 - [Grafana](https://hub.docker.com/r/grafana/grafana) and [InfluxDB 2.x](https://hub.docker.com/_/influxdb/tags?page=1&name=2.7) or [VictoriaMetrics](https://hub.docker.com/r/victoriametrics/victoria-metrics)
 - [Grafana dashboard](https://grafana.com/grafana/dashboards/14597)
-- One or more Victron devices with a VE.Direct text-protocol connection
+- One or more Victron devices with a VE.Direct text-protocol connection. Each complete text block must contain a non-empty `SER#`, as on SmartSolar MPPT devices. Devices that do not meet this requirement are not supported.
 - A Raspberry Pi or another always-on computer with [.NET 10](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 - Permission to open the relevant serial devices
 
@@ -41,21 +41,21 @@ host=<collector-host>
 device=<VE.Direct SER#>
 ```
 
-VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning in both backends. Complete frame payloads from all devices share one bounded InfluxDB queue.
+VictoriaMetrics converts Influx tags to labels, so `device` has the same meaning in both backends. Complete frame payloads from all devices share one InfluxDB queue.
 
 ## InfluxDB Batching
 
-InfluxDB writes run every ten seconds by default. Each request contains at most 100 complete frames. Frames received while a request is running remain in the queue for a later request.
+The writer waits ten seconds by default before draining the queue. Each request contains at most 100 complete frames; the writer sends as many requests as needed to catch up without waiting between successful requests.
 
-Change the interval with `--influxWriteInterval`. The queue holds at most 2,000 complete frames by default; `--influxMaxQueuedFrames` changes that limit. If the queue is full, the oldest queued frame is discarded without blocking serial-port readers. A failed batch is retried unchanged at the next interval. Pending frames may be discarded when the application stops.
+Change the interval with `--influxWriteInterval`. A failed batch is retried unchanged after the interval. Serial-port readers do not wait for the writer, and frames are not dropped due to backlog. The queue has no frame limit and is held in RAM, so it can grow during a long database outage or sustained overload. Pending frames are not persisted across shutdown. Remove `--influxMaxQueuedFrames` from existing commands; it is no longer supported.
 
 ## Auto-Discovery
 
 The collector polls `SerialPort.GetPortNames()` and starts an independent reader and parser for each port. The default scan interval is five seconds and can be changed with `--scan-interval`.
 
-The application owns the port monitor and the selected frame output. Console output writes every accepted frame immediately. Influx output converts frames to metrics and passes them to its bounded background writer. During shutdown, the port monitor stops all readers before the output and its resources are disposed.
+The application owns the port monitor and the selected frame output. Console output writes every accepted frame immediately. Influx output converts frames to metrics and queues them for the background writer. During shutdown, the port monitor stops all readers before the output and its resources are disposed.
 
-Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-discover` options have been removed. The former time-based `-i`/`--interval` batch option has been replaced by event-based shared batching.
+Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-discover` options have been removed. Use `--influxWriteInterval` instead of the former `-i`/`--interval` batch option.
 
 ## Hotplug and Reconnect
 
@@ -67,7 +67,7 @@ Automatic discovery is the only mode. The former `-p`/`--port` and `--auto-disco
 - The parser discards frames larger than 4 KiB and resynchronizes on subsequent VE.Direct data.
 - Shutdown stops all readers and then disposes the selected output.
 
-Frames without a non-empty `SER#` are discarded. A warning is logged once per affected port until a valid serial number is received.
+Frames without a non-empty `SER#` are discarded even if a previous frame included one. The collector logs a message for each affected port when it starts seeing frames without a serial number.
 
 If two ports report the same `SER#`, the first reader remains active and the later source is suppressed. After the first reader disconnects, another port can take over that identity.
 
@@ -81,8 +81,7 @@ Run with InfluxDB output:
   --influxDbUrl http://localhost:8086 \
   --influxDbBucket solar \
   --influxDbOrg home \
-  --influxWriteInterval 10 \
-  --influxMaxQueuedFrames 2000
+  --influxWriteInterval 10
 ```
 
 To use a three-second discovery interval, add `--scan-interval 3`.

@@ -13,7 +13,6 @@ internal sealed class CollectorConfiguration
     private readonly CommandOption<string> influxDbOrg;
     private readonly CommandOption<string> influxMetricPrefix;
     private readonly CommandOption<int> influxWriteInterval;
-    private readonly CommandOption<int> influxMaxQueuedFrames;
 
     internal CollectorConfiguration(CommandLineApplication app)
     {
@@ -51,11 +50,6 @@ internal sealed class CollectorConfiguration
                 "Interval between InfluxDB writes in seconds",
                 CommandOptionType.SingleValue)
             .Accepts(value => value.Range(1, 300));
-        this.influxMaxQueuedFrames = app.Option<int>(
-                "--influxMaxQueuedFrames",
-                "Maximum number of queued VE.Direct frames",
-                CommandOptionType.SingleValue)
-            .Accepts(value => value.Range(1, 1_000_000));
 
         this.SetDefaultValues();
     }
@@ -78,8 +72,6 @@ internal sealed class CollectorConfiguration
 
     internal int InfluxWriteInterval => this.influxWriteInterval.ParsedValue;
 
-    internal int InfluxMaxQueuedFrames => this.influxMaxQueuedFrames.ParsedValue;
-
     internal enum OutputDefinition
     {
         Console,
@@ -100,6 +92,5 @@ internal sealed class CollectorConfiguration
         this.influxDbOrg.DefaultValue = "home";
         this.influxMetricPrefix.DefaultValue = "ve_direct";
         this.influxWriteInterval.DefaultValue = 10;
-        this.influxMaxQueuedFrames.DefaultValue = 2_000;
     }
 }

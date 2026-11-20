@@ -142,43 +142,45 @@ public sealed class MetricsPipelineTests
     }
 
     [Fact]
-    public async Task Writer_ProcessesAtMostOneHundredFramesPerInterval()
+    public async Task Writer_DrainsBacklogInOrder_InBatchesOfAtMostOneHundredFrames()
     {
+        const int frameCount = 2_051;
         using var ticks = new SemaphoreSlim(0);
-        var calls = new ConcurrentQueue<List<PointData>>();
-        var firstWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string[]>();
+        var backlogWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var framesWritten = 0;
         using var client = CreateClient(
             (points, _) =>
             {
-                calls.Enqueue(points);
-                if (calls.Count == 1)
+                calls.Add(points.Select(ToLineProtocol).ToArray());
+                framesWritten += points.Count;
+                if (framesWritten >= frameCount)
                 {
-                    firstWriteCompleted.TrySetResult();
-                }
-                else if (calls.Count == 2)
-                {
-                    secondWriteCompleted.TrySetResult();
+                    backlogWritten.TrySetResult();
                 }
 
                 return Task.CompletedTask;
             },
-            ticks,
-            maxQueuedFrames: 101);
+            ticks);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        for (var index = 0; index < 101; index++)
+        for (var index = 0; index < frameCount; index++)
         {
-            WriteFrameData(client, $"HQ{index}", timeout.Token);
+            client.WriteFrameData("test", new Dictionary<string, string>
+            {
+                ["SER#"] = "HQ111",
+                ["V"] = (12_000 + index).ToString()
+            }, timeout.Token);
         }
 
         ticks.Release();
-        await firstWriteCompleted.Task.WaitAsync(timeout.Token);
-        ticks.Release();
-        await secondWriteCompleted.Task.WaitAsync(timeout.Token);
+        await backlogWritten.Task.WaitAsync(timeout.Token);
 
-        Assert.Equal(500, calls.ElementAt(0).Count);
-        Assert.Equal(5, calls.ElementAt(1).Count);
+        Assert.Equal(21, calls.Count);
+        Assert.All(calls, batch => Assert.InRange(batch.Length, 1, 100));
+        Assert.Equal(
+            Enumerable.Range(12_000, frameCount).Select(voltage => $"voltage={voltage}i"),
+            calls.SelectMany(batch => batch).Select(line => line.Split(' ')[1]));
     }
 
     [Fact]
@@ -187,7 +189,6 @@ public sealed class MetricsPipelineTests
         using var ticks = new SemaphoreSlim(0);
         var calls = new ConcurrentQueue<string[]>();
         var firstAttemptCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var retryCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var nextBatchCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var client = CreateClient((points, _) =>
         {
@@ -198,11 +199,7 @@ public sealed class MetricsPipelineTests
                 throw new InvalidOperationException("InfluxDB unavailable");
             }
 
-            if (calls.Count == 2)
-            {
-                retryCompleted.TrySetResult();
-            }
-            else
+            if (calls.Count == 3)
             {
                 nextBatchCompleted.TrySetResult();
             }
@@ -215,42 +212,13 @@ public sealed class MetricsPipelineTests
         ticks.Release();
         await firstAttemptCompleted.Task.WaitAsync(timeout.Token);
         WriteFrameData(client, "HQ222", timeout.Token);
-        ticks.Release();
-        await retryCompleted.Task.WaitAsync(timeout.Token);
-
-        Assert.Equal(2, calls.Count);
-        Assert.Equal(calls.ElementAt(0), calls.ElementAt(1));
-        Assert.DoesNotContain(calls.ElementAt(1), line => line.Contains("device=HQ222", StringComparison.Ordinal));
-
+        Assert.Single(calls);
         ticks.Release();
         await nextBatchCompleted.Task.WaitAsync(timeout.Token);
+
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(calls.ElementAt(0), calls.ElementAt(1));
         Assert.All(calls.ElementAt(2), line => Assert.Contains("device=HQ222", line, StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Writer_FullQueue_DropsOldestFrame()
-    {
-        using var ticks = new SemaphoreSlim(0);
-        var writeCompleted = new TaskCompletionSource<string[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var client = CreateClient(
-            (points, _) =>
-            {
-                writeCompleted.TrySetResult(points.Select(ToLineProtocol).ToArray());
-                return Task.CompletedTask;
-            },
-            ticks,
-            maxQueuedFrames: 2);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        WriteFrameData(client, "HQ111", timeout.Token);
-        WriteFrameData(client, "HQ222", timeout.Token);
-        WriteFrameData(client, "HQ333", timeout.Token);
-
-        ticks.Release();
-        var payload = await writeCompleted.Task.WaitAsync(timeout.Token);
-        Assert.DoesNotContain(payload, line => line.Contains("device=HQ111", StringComparison.Ordinal));
-        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ222", StringComparison.Ordinal)));
-        Assert.Equal(5, payload.Count(line => line.Contains("device=HQ333", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -275,8 +243,7 @@ public sealed class MetricsPipelineTests
                     secondWriteCompleted.TrySetResult();
                 }
             },
-            ticks,
-            maxQueuedFrames: 1);
+            ticks);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         WriteFrameData(client, "HQ111", timeout.Token);
@@ -289,11 +256,14 @@ public sealed class MetricsPipelineTests
         }
 
         releaseFirstWriter.SetResult();
-        ticks.Release();
         await secondWriteCompleted.Task.WaitAsync(timeout.Token);
 
         Assert.Equal(2, calls.Count);
-        Assert.Contains(calls.ElementAt(1), line => line.Contains("voltage=12019i", StringComparison.Ordinal));
+        Assert.Equal(100, calls.ElementAt(1).Length);
+        for (var voltage = 12000; voltage < 12020; voltage++)
+        {
+            Assert.Contains(calls.ElementAt(1), line => line.Contains($"voltage={voltage}i", StringComparison.Ordinal));
+        }
     }
 
     [Fact]
@@ -326,15 +296,13 @@ public sealed class MetricsPipelineTests
 
     private static MetricsClient CreateClient(
         Func<List<PointData>, CancellationToken, Task> writePoints,
-        SemaphoreSlim? ticks = null,
-        int maxQueuedFrames = 2_000)
+        SemaphoreSlim? ticks = null)
     {
         return new MetricsClient(
             "ve_direct",
             "collector",
             writePoints,
             TimeSpan.FromSeconds(10),
-            maxQueuedFrames,
             waitForNextWrite: ticks is null ? null : ticks.WaitAsync);
     }
 

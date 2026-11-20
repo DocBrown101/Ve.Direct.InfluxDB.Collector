@@ -1,32 +1,29 @@
 using System.Collections.Concurrent;
+using System.IO.Ports;
+using Ve.Direct.InfluxDB.Collector.ProtocolReader;
 
 namespace Ve.Direct.InfluxDB.Collector.SerialPorts;
 
-internal sealed class VEDirectPortMonitor
+internal sealed class VEDirectPortMonitor(
+    VEDirectPortMonitor.DeviceFrameHandler processFrame,
+    TimeSpan scanInterval,
+    TimeSpan reconnectDelay,
+    Func<string[]> getPortNames,
+    ReadPort readPort)
 {
-    private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(2);
-
-    private readonly MonitoringIntervals intervals;
-    private readonly DeviceFrameHandler processFrame;
-    private readonly PortSource serialPorts;
     private readonly Dictionary<string, ActiveReader> activeReaders = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> serialOwners = new(StringComparer.Ordinal);
 
     internal VEDirectPortMonitor(
         DeviceFrameHandler processFrame,
         TimeSpan scanInterval)
-        : this(processFrame, new MonitoringIntervals(scanInterval, ReconnectDelay), PortSource.System)
+        : this(
+            processFrame,
+            scanInterval,
+            TimeSpan.FromSeconds(2),
+            SerialPort.GetPortNames,
+            (portName, callback, ct) => new VEDirectReader(portName).ReadFramesUntilDisconnectedAsync(callback, ct))
     {
-    }
-
-    internal VEDirectPortMonitor(
-        DeviceFrameHandler processFrame,
-        MonitoringIntervals intervals,
-        PortSource serialPorts)
-    {
-        this.processFrame = processFrame;
-        this.intervals = intervals;
-        this.serialPorts = serialPorts;
     }
 
     internal async Task MonitorPortsAsync(CancellationToken ct)
@@ -36,7 +33,7 @@ internal sealed class VEDirectPortMonitor
             while (!ct.IsCancellationRequested)
             {
                 await this.ScanPortsAsync().ConfigureAwait(false);
-                await Task.Delay(this.intervals.Scan, ct).ConfigureAwait(false);
+                await Task.Delay(scanInterval, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -53,7 +50,7 @@ internal sealed class VEDirectPortMonitor
         string[] discoveredPorts;
         try
         {
-            discoveredPorts = this.serialPorts.GetPortNames();
+            discoveredPorts = getPortNames();
         }
         catch (Exception exception)
         {
@@ -83,7 +80,7 @@ internal sealed class VEDirectPortMonitor
             while (!ct.IsCancellationRequested)
             {
                 await this.ReadPortUntilDisconnectedAsync(new ReaderState(portName), ct).ConfigureAwait(false);
-                await Task.Delay(this.intervals.Reconnect, ct).ConfigureAwait(false);
+                await Task.Delay(reconnectDelay, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -95,7 +92,7 @@ internal sealed class VEDirectPortMonitor
     {
         try
         {
-            await this.serialPorts.ReadAsync(
+            await readPort(
                 reader.PortName,
                 (frame, token) => this.HandleFrame(reader, frame, token),
                 ct).ConfigureAwait(false);
@@ -125,7 +122,7 @@ internal sealed class VEDirectPortMonitor
         {
             if (!reader.HasLoggedMissingSerial)
             {
-                ConsoleLogger.Info($"Ignoring VE.Direct data from {reader.PortName} until a valid SER# is received.");
+                ConsoleLogger.Info($"Ignoring VE.Direct frames without a valid SER# on {reader.PortName}.");
                 reader.HasLoggedMissingSerial = true;
             }
 
@@ -168,7 +165,7 @@ internal sealed class VEDirectPortMonitor
     {
         try
         {
-            this.processFrame(portName, frame, ct);
+            processFrame(portName, frame, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -214,7 +211,10 @@ internal sealed class VEDirectPortMonitor
 
     internal delegate void DeviceFrameHandler(string portName, IReadOnlyDictionary<string, string> frame, CancellationToken ct);
 
-    internal sealed record MonitoringIntervals(TimeSpan Scan, TimeSpan Reconnect);
-
     private sealed record ActiveReader(CancellationTokenSource StopSignal, Task Completion);
 }
+
+internal delegate Task ReadPort(
+    string portName,
+    Action<IReadOnlyDictionary<string, string>, CancellationToken> processFrame,
+    CancellationToken ct);

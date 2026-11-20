@@ -17,6 +17,7 @@ public sealed class VEDirectPortMonitorTests
             {
                 callback(Frame(null, "13000"), cancellationToken);
                 callback(Frame("HQ111", "12900"), cancellationToken);
+                callback(Frame(null, "12800"), cancellationToken);
                 validFrameSent.SetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             },
@@ -231,15 +232,12 @@ public sealed class VEDirectPortMonitorTests
         ReadPort readPort,
         VEDirectPortMonitor.DeviceFrameHandler processFrame)
     {
-        var serialPorts = new PortSource(getPortNames, readPort);
-        var intervals = new VEDirectPortMonitor.MonitoringIntervals(
-            TimeSpan.FromMilliseconds(10),
-            TimeSpan.FromMilliseconds(5));
-
         return new VEDirectPortMonitor(
             processFrame,
-            intervals,
-            serialPorts);
+            TimeSpan.FromMilliseconds(10),
+            TimeSpan.FromMilliseconds(5),
+            getPortNames,
+            readPort);
     }
 
     private static async Task RunUntilAsync(

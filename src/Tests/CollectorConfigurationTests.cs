@@ -7,25 +7,23 @@ using Xunit;
 public sealed class CollectorConfigurationTests
 {
     [Fact]
-    public void InfluxBatchOptions_Defaults_AreTimeBased()
+    public void InfluxWriteInterval_DefaultsToTenSeconds()
     {
         var (app, configuration) = CreateConfiguration();
 
         app.Execute(Array.Empty<string>());
 
         Assert.Equal(10, configuration.InfluxWriteInterval);
-        Assert.Equal(2_000, configuration.InfluxMaxQueuedFrames);
     }
 
     [Fact]
-    public void InfluxBatchOptions_ExplicitValues_AreParsed()
+    public void InfluxWriteInterval_ParsesExplicitValue()
     {
         var (app, configuration) = CreateConfiguration();
 
-        app.Execute("--influxWriteInterval", "25", "--influxMaxQueuedFrames", "5000");
+        app.Execute("--influxWriteInterval", "25");
 
         Assert.Equal(25, configuration.InfluxWriteInterval);
-        Assert.Equal(5_000, configuration.InfluxMaxQueuedFrames);
     }
 
     [Fact]
